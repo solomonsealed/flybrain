@@ -64,8 +64,17 @@ h1 {
 <div id="results"></div>
 <script src="../js/constants.js"></script>
 <script src="../js/connectome.js"></script>
+<script src="../js/world-config.js"></script>
+<script src="../js/world-state.js"></script>
+<script src="../js/world-physics.js"></script>
+<script src="../js/world-senses.js"></script>
+<script src="../js/world-brain-adapter.js"></script>
+<script src="../js/simulation-clock.js"></script>
+<script src="../js/world-sim.js"></script>
 <script src="../js/fly-logic.js"></script>
 <script src="./tests.js"></script>
+<!-- World tests: section W2 (real worker + data) runs only under node tests/run-node.js -->
+<script src="./world-tests.js"></script>
 <script>
 window.onload = function () { runAllTests(); };
 </script>

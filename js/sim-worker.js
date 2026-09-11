@@ -1,4 +1,4 @@
-/* LIF neuron simulator Web Worker — T7.3 + T7.7 (neuropil-gated)
+/* LIF neuron simulator Web Worker — T7.3 + T7.7 (neuropil-gated) + world step mode
  *
  * Leaky integrate-and-fire simulation over the full Drosophila connectome.
  * Receives a binary connectome ArrayBuffer (optionally gzipped) on init.
@@ -11,14 +11,33 @@
  *   CSR matrix remapped to match. (struct-of-arrays, group-sorted)
  * - Tick rate reduced to 10/sec; renderer interpolates brightness.
  *
+ * World step mode (FLY-WORLD-PLAN phase 1/2):
+ * - 'step' requests carry a stepId, the sustained stimulus for that step, and
+ *   optional one-shot pulses. The worker runs exactly `ticks` ticks and replies
+ *   with a 'stepResult' carrying the same stepId. No timers are involved, so a
+ *   run is a pure function of (connectome, params, initial state, requests).
+ * - 'definePopulations' registers named neuron index lists (sorted index space)
+ *   whose spike counts are returned with every step result. This is how
+ *   hemisphere-specific sidecar populations are read out without scanning all
+ *   neurons on the main thread.
+ * - 'ready' reports sortedToOriginal so callers can map original (binary/
+ *   sidecar) neuron indices onto the worker's group-sorted order.
+ * - 'snapshot' / 'restore' copy the full dynamic state for replay.
+ *
  * Binary format (little-endian):
  *   Header:   2 x uint32  -- neuron_count, edge_count
  *   Edges:    edge_count x (uint32 pre, uint32 post, float32 weight), sorted by pre
  *   Metadata: neuron_count x (uint8 region_type, uint16 group_id)
  *
+ * Weights in the binary are signed synapse counts. By default they are scaled
+ * so the largest |weight| equals WEIGHT_SCALE (legacy). setParams can instead
+ * set `synapseWeight`, the voltage contributed by one synapse (in threshold
+ * units), which is the calibrated mode used by the garden simulation.
+ *
  * Message protocol:
- *   Main -> Worker: init, start, stop, stimulate, setStimulusState, setParams
- *   Worker -> Main: ready, tick, stats, error
+ *   Main -> Worker: init, start, stop, stimulate, setStimulusState, setParams,
+ *                   reset, step, definePopulations, snapshot, restore
+ *   Worker -> Main: ready, tick, stats, error, stepResult, snapshot, restored
  */
 
 /* ---------- constants ---------- */
@@ -42,6 +61,9 @@ var colIdx = null;           // Uint32Array[edgeCount] CSR col indices (group-so
 var values = null;           // Float32Array[edgeCount] CSR edge weights
 var regionType = null;       // Uint8Array[N] region per neuron (group-sorted)
 var groupId = null;          // Uint16Array[N] group per neuron (group-sorted)
+var sortedToOriginal = null; // Uint32Array[N] original binary index per sorted position
+var maxAbsWeight = 0;        // largest |raw weight| (synapse count) in the binary
+var currentWeightScale = 0;  // multiplier currently applied to raw weights
 var leakRate = DEFAULT_LEAK_RATE;
 var threshold = DEFAULT_THRESHOLD;
 var refractoryPeriod = DEFAULT_REFRACTORY_PERIOD;
@@ -54,6 +76,9 @@ var tickTimeSum = 0;
 var tickTimeSamples = 0;
 var activeNeuronCount = 0;
 var cumulativeFiredCount = 0;
+
+/* readout populations (sorted index space) */
+var populations = [];        // [{name, indices: Uint32Array}]
 
 /* neuropil-gated simulation structures (built by buildGroupStructures) */
 var numGroups = 0;
@@ -100,6 +125,11 @@ function parseBinary(buffer) {
 
 	var edgeOffset = 8;
 	var metaOffset = edgeOffset + edgeCount * 12;
+	var expectedBytes = metaOffset + N * 3;
+	if (buffer.byteLength !== expectedBytes) {
+		throw new Error('Connectome binary size mismatch: header implies ' + expectedBytes +
+			' bytes, got ' + buffer.byteLength);
+	}
 
 	/* allocate CSR arrays (original index space, remapped later) */
 	rowPtr = new Uint32Array(N + 1);
@@ -127,11 +157,13 @@ function parseBinary(buffer) {
 		var absW = rawW < 0 ? -rawW : rawW;
 		if (absW > maxAbsW) maxAbsW = absW;
 	}
+	maxAbsWeight = maxAbsW;
 
-	/* normalize weights */
+	/* normalize weights (legacy scale; setParams.synapseWeight can rescale) */
+	currentWeightScale = maxAbsW > 0 ? WEIGHT_SCALE / maxAbsW : 1;
 	if (maxAbsW > 0) {
 		for (var e = 0; e < edgeCount; e++) {
-			values[e] = (values[e] / maxAbsW) * WEIGHT_SCALE;
+			values[e] = values[e] * currentWeightScale;
 		}
 	}
 
@@ -153,7 +185,9 @@ function parseBinary(buffer) {
 /* ---------- buildGroupStructures ---------- */
 /* Reorders all per-neuron arrays and the CSR matrix so neurons within each
  * group occupy a contiguous range. Enables cache-friendly iteration over
- * only active groups (neuropil gating) and SIMD-friendly memory access. */
+ * only active groups (neuropil gating) and SIMD-friendly memory access.
+ * The reorder is a stable counting sort, so sortedToOriginal is a pure
+ * function of the binary's group_id column. */
 
 function buildGroupStructures() {
 	/* determine number of groups */
@@ -182,6 +216,7 @@ function buildGroupStructures() {
 		var g = groupId[i];
 		sortedByGroup[writePos[g]++] = i;
 	}
+	sortedToOriginal = sortedByGroup;
 
 	/* reverse mapping: originalToSorted[original_index] = sorted_pos */
 	var originalToSorted = new Uint32Array(N);
@@ -233,12 +268,13 @@ function buildGroupStructures() {
 	groupStimulatedThisTick = new Uint8Array(numGroups);
 }
 
-/* ---------- tick (neuropil-gated) ---------- */
+/* ---------- runTick (neuropil-gated, no messaging) ---------- */
+/* Advances the network by one tick using the current sustained stimulus.
+ * Adds this tick's per-group spike counts into groupSpikeCounts and returns
+ * the number of neurons that fired. */
 
-function tick() {
-	var t0 = performance.now();
+function runTick(groupSpikeCounts) {
 	var firedNeuronCount = 0;
-	var groupSpikeCounts = new Uint16Array(numGroups);
 
 	/* reset per-tick scratch */
 	groupRecvInput.fill(0);
@@ -345,18 +381,38 @@ function tick() {
 		}
 	}
 
+	tickCount++;
+	return firedNeuronCount;
+}
+
+/* ---------- tick (free-running legacy mode) ---------- */
+
+function tick() {
+	var t0 = performance.now();
+	var groupSpikeCounts = new Uint16Array(numGroups);
+	var firedNeuronCount = runTick(groupSpikeCounts);
+
 	/* post fire state to main thread */
 	self.postMessage({
 		type: 'tick',
 		fireState: fired,
 		firedNeurons: firedNeuronCount,
 		groupSpikeCounts: groupSpikeCounts,
-		tickCount: tickCount
+		tickCount: tickCount - 1
 	});
-	tickCount++;
 
-	/* performance stats */
-	var elapsed = performance.now() - t0;
+	recordStats(performance.now() - t0, firedNeuronCount);
+
+	/* schedule next tick at target rate */
+	if (running) {
+		var interval = Math.max(0, Math.floor(1000 / targetTickRate - (performance.now() - t0)));
+		setTimeout(tick, interval);
+	}
+}
+
+/* ---------- performance stats ---------- */
+
+function recordStats(elapsed, firedNeuronCount) {
 	tickTimeSum += elapsed;
 	tickTimeSamples++;
 	cumulativeFiredCount += firedNeuronCount;
@@ -382,12 +438,126 @@ function tick() {
 		tickTimeSamples = 0;
 		cumulativeFiredCount = 0;
 	}
+}
 
-	/* schedule next tick at target rate */
-	if (running) {
-		var interval = Math.max(0, Math.floor(1000 / targetTickRate - elapsed));
-		setTimeout(tick, interval);
+/* ---------- one-shot voltage injection ---------- */
+
+function applyPulses(indices, intensities) {
+	if (!indices) return;
+	for (var k = 0; k < indices.length; k++) {
+		var idx = indices[k];
+		if (idx < N) {
+			V[idx] += intensities[k];
+			/* activate target group for neuropil gating */
+			if (groupActive && !groupActive[groupId[idx]]) {
+				groupActive[groupId[idx]] = 1;
+				groupCooldown[groupId[idx]] = COOLDOWN_TICKS;
+			}
+		}
 	}
+}
+
+/* ---------- step mode ---------- */
+
+function countPopulationSpikes(out) {
+	for (var p = 0; p < populations.length; p++) {
+		var idx = populations[p].indices;
+		var c = 0;
+		for (var k = 0; k < idx.length; k++) {
+			if (fired[idx[k]]) c++;
+		}
+		out[p] += c;
+	}
+}
+
+function runStep(msg) {
+	var t0 = performance.now();
+	var ticks = msg.ticks > 0 ? msg.ticks : 1;
+	if (msg.stimulus !== undefined) {
+		sustainedIndices = msg.stimulus ? msg.stimulus.indices : null;
+		sustainedIntensities = msg.stimulus ? msg.stimulus.intensities : null;
+	}
+	if (msg.pulses) applyPulses(msg.pulses.indices, msg.pulses.intensities);
+
+	var groupSpikeCounts = new Uint32Array(numGroups);
+	var popSpikeCounts = new Uint32Array(populations.length);
+	var firedTotal = 0;
+	for (var t = 0; t < ticks; t++) {
+		firedTotal += runTick(groupSpikeCounts);
+		countPopulationSpikes(popSpikeCounts);
+	}
+	var elapsed = performance.now() - t0;
+	recordStats(elapsed, firedTotal);
+
+	var result = {
+		type: 'stepResult',
+		stepId: msg.stepId,
+		ticks: ticks,
+		tickCount: tickCount,
+		firedNeurons: firedTotal,
+		activeNeurons: activeNeuronCount,
+		groupSpikeCounts: groupSpikeCounts,
+		popSpikeCounts: popSpikeCounts,
+		computeMs: elapsed
+	};
+	if (msg.wantFireState) result.fireState = fired.slice();
+	return result;
+}
+
+/* ---------- snapshot / restore ---------- */
+
+function snapshotState() {
+	return {
+		V: V.slice(),
+		fired: fired.slice(),
+		refractory: refractory.slice(),
+		groupActive: groupActive.slice(),
+		groupCooldown: groupCooldown.slice(),
+		tickCount: tickCount,
+		leakRate: leakRate,
+		threshold: threshold,
+		refractoryPeriod: refractoryPeriod,
+		weightScale: currentWeightScale
+	};
+}
+
+function restoreState(s) {
+	V.set(s.V);
+	fired.set(s.fired);
+	refractory.set(s.refractory);
+	groupActive.set(s.groupActive);
+	groupCooldown.set(s.groupCooldown);
+	tickCount = s.tickCount;
+	leakRate = s.leakRate;
+	threshold = s.threshold;
+	refractoryPeriod = s.refractoryPeriod;
+	if (s.weightScale && s.weightScale !== currentWeightScale) setWeightScale(s.weightScale);
+}
+
+function setWeightScale(scale) {
+	var ratio = scale / currentWeightScale;
+	for (var e = 0; e < edgeCount; e++) values[e] *= ratio;
+	currentWeightScale = scale;
+}
+
+function resetState() {
+	V.fill(0);
+	fired.fill(0);
+	refractory.fill(0);
+	sustainedIndices = null;
+	sustainedIntensities = null;
+	if (groupActive) {
+		groupActive.fill(0);
+		groupCooldown.fill(0);
+		groupRecvInput.fill(0);
+		groupFiredThisTick.fill(0);
+		groupStimulatedThisTick.fill(0);
+	}
+	tickCount = 0;
+	tickTimeSum = 0;
+	tickTimeSamples = 0;
+	cumulativeFiredCount = 0;
+	activeNeuronCount = 0;
 }
 
 /* ---------- message handler ---------- */
@@ -402,7 +572,9 @@ self.onmessage = function (e) {
 			function postReady() {
 				buildGroupStructures();
 				self.postMessage({type: 'ready', neuronCount: N, edgeCount: edgeCount,
-					groupId: groupId, regionType: regionType});
+					groupId: groupId, regionType: regionType,
+					sortedToOriginal: sortedToOriginal, maxAbsWeight: maxAbsWeight,
+					weightScale: currentWeightScale});
 			}
 
 			var header = new Uint8Array(buffer, 0, 2);
@@ -437,19 +609,7 @@ self.onmessage = function (e) {
 		break;
 
 	case 'stimulate':
-		var indices = e.data.indices;
-		var intensities = e.data.intensities;
-		for (var k = 0; k < indices.length; k++) {
-			var idx = indices[k];
-			if (idx < N) {
-				V[idx] += intensities[k];
-				/* activate target group for neuropil gating */
-				if (groupActive && !groupActive[groupId[idx]]) {
-					groupActive[groupId[idx]] = 1;
-					groupCooldown[groupId[idx]] = COOLDOWN_TICKS;
-				}
-			}
-		}
+		applyPulses(e.data.indices, e.data.intensities);
 		break;
 
 	case 'setStimulusState':
@@ -459,28 +619,42 @@ self.onmessage = function (e) {
 
 	case 'reset':
 		if (N === 0) break;
-		V.fill(0);
-		fired.fill(0);
-		refractory.fill(0);
-		sustainedIndices = null;
-		sustainedIntensities = null;
-		if (groupActive) {
-			groupActive.fill(0);
-			groupCooldown.fill(0);
-			groupRecvInput.fill(0);
-			groupFiredThisTick.fill(0);
-			groupStimulatedThisTick.fill(0);
-		}
-		tickTimeSum = 0;
-		tickTimeSamples = 0;
-		cumulativeFiredCount = 0;
-		activeNeuronCount = 0;
+		resetState();
 		break;
 
 	case 'setParams':
 		if (e.data.leakRate !== undefined) leakRate = e.data.leakRate;
 		if (e.data.threshold !== undefined) threshold = e.data.threshold;
 		if (e.data.refractoryPeriod !== undefined) refractoryPeriod = e.data.refractoryPeriod;
+		if (e.data.synapseWeight !== undefined && N > 0) setWeightScale(e.data.synapseWeight);
+		break;
+
+	case 'definePopulations':
+		populations = [];
+		var defs = e.data.populations || [];
+		for (var p = 0; p < defs.length; p++) {
+			populations.push({name: defs[p].name, indices: defs[p].indices});
+		}
+		break;
+
+	case 'step':
+		if (N === 0) {
+			self.postMessage({type: 'error', message: 'Cannot step: not initialized', stepId: e.data.stepId});
+			return;
+		}
+		running = false; /* step mode and free-running mode are exclusive */
+		self.postMessage(runStep(e.data));
+		break;
+
+	case 'snapshot':
+		if (N === 0) break;
+		self.postMessage({type: 'snapshot', requestId: e.data.requestId, state: snapshotState()});
+		break;
+
+	case 'restore':
+		if (N === 0) break;
+		restoreState(e.data.state);
+		self.postMessage({type: 'restored', requestId: e.data.requestId});
 		break;
 	}
 };

@@ -20,18 +20,22 @@ Any output not matching this format will break the pipeline. No markdown fences,
 
 | Action | Params | Effect |
 |--------|--------|--------|
-| place_food | {"x": number, "y": number} | Places food at canvas coordinates. x >= 0, y >= 44 (toolbar height). |
+| place_food | {"coords": "world", "x": number, "z": number} | Drops a ripe fruit on the garden floor at world coordinates (body lengths). x in [2, 118], z in [2, 88]. Points inside trunks, stones or the trellis are rejected. |
 | set_light | {"level": "bright" or "dim" or "dark"} | Changes ambient light level. |
 | set_temp | {"level": "neutral" or "warm" or "cool"} | Changes temperature. |
-| touch | {"x": number, "y": number} or {} | Touches at coordinates, or fly center if omitted. |
-| blow_wind | {"strength": 0-1, "direction": degrees} | Blows wind. Strength 0-1, direction in degrees. |
-| clear_food | {} | Removes all food from canvas. |
+| touch | {"location": "head" or "thorax" or "abdomen" or "leg"} or {} | Touches the fly (thorax if omitted). |
+| blow_wind | {"strength": 0-1, "direction": degrees} | A 2-second gust. Direction is the way the air travels in the world frame: 0 = toward east (+x), 90 = toward south (+z). |
+| clear_food | {} | Removes all fruit lying on the ground. |
+
+Legacy screen-coordinate commands (`{"x": px, "y": px}` without `coords`) are still accepted and converted through the current camera, but world coordinates are preferred: they do not depend on how the viewer has panned or zoomed.
 
 ## State Schema
 
 You receive a JSON object with this structure:
 
 {
+  "coordinateVersion": "world-bl-v1",
+  "world": { "bounds": { "xMin": 0, "xMax": 120, "zMin": 0, "zMax": 90 }, "units": "body_lengths" },
   "drives": {
     "hunger": 0.0-1.0,
     "fear": 0.0-1.0,
@@ -40,22 +44,26 @@ You receive a JSON object with this structure:
     "groom": 0.0-1.0
   },
   "behavior": {
-    "current": "idle" or "walk" or "feed" or "groom" or "fly" or "rest" or "explore" or "startle" or "phototaxis",
+    "current": "idle" or "walk" or "feed" or "groom" or "fly" or "rest" or "startle" or "brace",
     "enterTime": unix_ms,
     "groomLocation": string
   },
   "position": {
-    "x": number,
-    "y": number,
-    "facingDir": radians,
-    "speed": number
+    "x": number,        // world, body lengths (east)
+    "z": number,        // world, body lengths (south)
+    "altitude": number,
+    "heading": radians, // 0 = east, counter-clockwise seen from above
+    "speed": number     // body lengths per second
   },
   "firingStats": {
     "firedNeurons": number
   },
   "food": [
-    {"x": number, "y": number, "radius": number, "eaten": 0-1}
+    {"id": string, "x": number, "z": number, "species": string, "stage": "fallen" or "fermenting", "remaining": 0-1}
   ],
+  "canopyFruit": number,   // fruit still on branches: NOT reachable, never counts as food
+  "webs": [ {"id": string, "x": number, "z": number} ],
+  "fearAttribution": null or {"source": "web" or "user" or "caretaker", "event": string, "secondsAgo": number},
   "environment": {
     "lightLevel": 0 or 1 or 2,
     "temperature": 0 or 1 or 2
@@ -71,6 +79,8 @@ Field notes:
 - lightLevel: 0=bright, 1=dim, 2=dark
 - temperature: 0=neutral, 1=warm, 2=cool
 - enterTime is Date.now() milliseconds when the current behavior started
+- food lists only fruit the fly can actually reach and eat; fruit on branches is counted separately in canopyFruit
+- fear is a modeled defensive state driven by the fly's neural threat and touch readouts; fearAttribution says what caused the latest rise (spiderwebs are a normal part of the garden, not a caretaker mistake)
 
 ## Policy Rules
 
@@ -83,11 +93,11 @@ Evaluate these rules in priority order (highest priority first). Apply the FIRST
 3. Fear > 0.3 -- comfort the fly: If drives.fear > 0.3 and environment.temperature is not 0 (not neutral), issue {"action": "set_temp", "params": {"level": "neutral"}, "reasoning": "Fear elevated at <value>, setting temperature to neutral to reduce stress"}. Replace <value> with the actual fear value.
 
 4. Hunger > 0.6 -- feed the fly: If drives.hunger > 0.6 and the food array is empty (length 0), place food near the fly but NOT on top of it. Compute food placement as follows:
-   - Pick one random cardinal offset from these four: (+80, 0), (-80, 0), (0, +80), (0, -80)
-   - Add offset to fly position: x = position.x + offsetX, y = position.y + offsetY
-   - Clamp: x = max(20, min(x, 800)), y = max(64, min(y, 560))
-   - Output {"action": "place_food", "params": {"x": computed_x, "y": computed_y}, "reasoning": "Hunger at <value>, placing food ~80px from fly"}
-   - If food already exists on canvas (food array length > 0), do NOT place more food. Output wait instead.
+   - Pick one random cardinal offset from these four: (+8, 0), (-8, 0), (0, +8), (0, -8)
+   - Add offset to fly position: x = position.x + offsetX, z = position.z + offsetZ
+   - Clamp: x = max(4, min(x, 116)), z = max(4, min(z, 86))
+   - Output {"action": "place_food", "params": {"coords": "world", "x": computed_x, "z": computed_z}, "reasoning": "Hunger at <value>, placing fruit ~8 body lengths from the fly"}
+   - If reachable food already exists (food array length > 0), do NOT place more food. Output wait instead.
 
 5. Fatigue > 0.5 -- dim lights: If drives.fatigue > 0.5 and environment.lightLevel is 0 (bright), output {"action": "set_light", "params": {"level": "dim"}, "reasoning": "Fatigue at <value>, dimming lights to encourage rest"}.
 
@@ -101,8 +111,8 @@ Evaluate these rules in priority order (highest priority first). Apply the FIRST
 ## Important Notes
 
 - You receive a single JSON state snapshot. You output a single JSON action. No multi-turn conversation.
-- Clamp all coordinates: x in [20, 800], y in [64, 560]. These are safe canvas bounds.
+- Clamp all coordinates: x in [4, 116], z in [4, 86] (world body lengths inside the garden walls).
 - Prefer doing nothing over doing something harmful. When in doubt, wait.
-- Never place food at the fly's exact position -- always offset by at least 60px.
+- Never place food at the fly's exact position -- always offset by at least 6 body lengths.
 - The FEAR_BACKOFF and CURRENT_TIME fields are injected by the launch script into your prompt, not part of the state JSON.
 - Replace <value> placeholders with actual numeric values from the state.

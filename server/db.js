@@ -117,7 +117,8 @@ function openDb(dbPath) {
         d.groom != null ? d.groom : null,
         b.current || null,
         p.x != null ? p.x : null,
-        p.y != null ? p.y : null,
+        // world-bl-v1 states report ground position as (x, z); pos_y keeps z
+        p.y != null ? p.y : (p.z != null ? p.z : null),
         p.facingDir != null ? p.facingDir : null,
         p.speed != null ? p.speed : null,
         f.firedNeurons != null ? f.firedNeurons : null,

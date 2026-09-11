@@ -1,20 +1,27 @@
 <!DOCTYPE html>
 
 <head>
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>FlyBrain</title>
-    <link rel="stylesheet" type="text/css" href="./css/main.css?v=17">
+    <link rel="stylesheet" type="text/css" href="./css/main.css?v=18">
 </head>
 
 <body>
     <div id="toolbar">
         <div class="toolbar-left">
             <button class="tool-btn sidebar-toggle" id="sidebarToggle" aria-label="Toggle panel">&#9776;</button>
-            <button class="tool-btn active" data-tool="feed">Feed</button>
-            <button class="tool-btn" data-tool="touch">Touch</button>
-            <button class="tool-btn" data-tool="air">Air</button>
+            <button class="tool-btn" data-tool="observe" title="Click a fruit, web or the fly to inspect it (O)">Observe</button>
+            <button class="tool-btn active" data-tool="fruit" title="Click the ground to place fruit">Fruit</button>
+            <button class="tool-btn" data-tool="web" title="Click the ground to place a web; click a web to remove it">Web</button>
+            <button class="tool-btn" data-tool="touch" title="Click the fly to touch it">Touch</button>
+            <button class="tool-btn" data-tool="air" title="Drag to blow a gust of air">Air</button>
             <button class="tool-btn" data-tool="light" id="lightBtn">Light: Bright</button>
             <button class="tool-btn" data-tool="temp" id="tempBtn">Temp: Neutral</button>
+            <button class="tool-btn" id="followBtn" aria-pressed="false" title="Follow the fly (F)">Follow</button>
+            <button class="tool-btn" id="pauseBtn" aria-pressed="false" title="Pause world and brain together (Space)">Pause</button>
+            <button class="tool-btn" id="resetBtn" title="Start a new run from the seed">Reset</button>
+            <button class="tool-btn" id="inspectorBtn" aria-pressed="false" title="Traces, events and experiments (I)">Inspect</button>
             <button class="tool-btn" id="brain3dBtn" aria-pressed="false">Brain 3D</button>
             <button class="tool-btn" id="activityToggle">Activity</button>
             <button class="tool-btn" id="learnBtn">Learn</button>
@@ -26,10 +33,11 @@
                 <span class="claude-dot"></span>
                 <span class="claude-status-text">AI</span>
             </span>
+            <span id="brainModeBadge" class="brain-mode-badge" title="Which brain model is producing the fly's behavior">Loading brain&hellip;</span>
             <span class="toolbar-title">FlyBrain</span>
             <span id="scaleIndicator" class="scale-indicator" style="display:none;"></span>
-            <img id="centerButton" src="./svg/center.svg" height="24" class="noselect toolbar-icon">
-            <img id="clearButton" src="./svg/clear.svg" height="24" class="noselect toolbar-icon">
+            <img id="centerButton" src="./svg/center.svg" height="24" class="noselect toolbar-icon" title="Reset camera (R)">
+            <img id="clearButton" src="./svg/clear.svg" height="24" class="noselect toolbar-icon" title="Clear ground fruit">
             <a href="https://github.com/snedea/flybrain">
                 <img id="githubButton" src="./svg/github.svg" class="noselect">
             </a>
@@ -40,11 +48,14 @@
             <span>Interaction Guide</span>
             <button class="help-close-btn" id="helpCloseBtn">&times;</button>
         </div>
-        <div class="help-item"><strong>Feed</strong> -- Click on the canvas to place food. The fly will seek and eat it when hungry.</div>
-        <div class="help-item"><strong>Touch</strong> -- Click on the fly to touch it. Location matters: head, thorax, abdomen, or leg each triggers different grooming. Tap 3+ times in 4 seconds for a pain response.</div>
-        <div class="help-item"><strong>Air</strong> -- Click and drag near the fly to blow wind. Drag distance controls wind strength.</div>
-        <div class="help-item"><strong>Light</strong> -- Cycles through Bright, Dim, and Dark. The fly exhibits phototaxis toward light.</div>
-        <div class="help-item"><strong>Temp</strong> -- Cycles through Neutral, Warm, and Cool. Warm makes the fly more active and avoidant. Cool makes it exploratory.</div>
+        <div class="help-item"><strong>The garden</strong> -- A walled orchard seen from the south. Fruit trees drop ripe fruit; two spiderwebs hang on tempting routes. The fly only knows what it smells, sees, tastes and touches.</div>
+        <div class="help-item"><strong>Camera</strong> -- Drag to pan, scroll or pinch to zoom, right-drag or two-finger twist to orbit. F follows the fly, R resets the view. The camera never moves anything in the garden.</div>
+        <div class="help-item"><strong>Observe</strong> -- Click a fruit, web or the fly to see ripeness, remaining food, how visible a web is, or what the fly is sensing.</div>
+        <div class="help-item"><strong>Fruit</strong> -- Click the ground to drop a ripe fruit. A hungry fly follows its smell; only eating reduces hunger.</div>
+        <div class="help-item"><strong>Web</strong> -- Click the ground to hang a web facing the fly; click a web to take it down. Webs scare the fly by how large, near and fast-approaching they look.</div>
+        <div class="help-item"><strong>Touch / Air</strong> -- Click the fly to touch it (head, thorax, abdomen or leg). Drag anywhere to blow a gust; the arrow shows its direction.</div>
+        <div class="help-item"><strong>Light / Temp</strong> -- Dim or darken the garden, or warm and cool it.</div>
+        <div class="help-item"><strong>Inspect</strong> -- Live traces of senses, neural activity and motor output, an event timeline, and repeatable experiments with seeds.</div>
     </div>
     <div id="left-panel">
         <div id="connectome-panel">
@@ -66,7 +77,7 @@
                 <div class="drive-bar-bg"><div class="drive-bar" id="driveHunger"></div></div>
             </div>
             <div class="drive-row">
-                <span class="drive-label">Fear</span>
+                <span class="drive-label" title="Modeled defensive state driven by neural threat and touch readouts">Fear*</span>
                 <div class="drive-bar-bg"><div class="drive-bar" id="driveFear"></div></div>
             </div>
             <div class="drive-row">
@@ -80,6 +91,10 @@
             <div class="drive-row">
                 <span class="drive-label">Groom</span>
                 <div class="drive-bar-bg"><div class="drive-bar" id="driveGroom"></div></div>
+            </div>
+            <div class="drive-row sim-clock-row">
+                <span class="drive-label">Time</span>
+                <span id="simClock" class="sim-clock">0.0 s</span>
             </div>
         </div>
     </div>
@@ -112,10 +127,79 @@
         </div>
     </div>
     <div id="drawer-backdrop" class="drawer-backdrop"></div>
-    <canvas id='canvas'></canvas>
+    <!-- The garden: WebGL scene (world-canvas) with a 2D overlay canvas that
+         doubles as the fallback renderer when WebGL is unavailable. -->
+    <canvas id="world-canvas" tabindex="0" aria-label="Garden view"></canvas>
+    <canvas id="canvas"></canvas>
+    <div id="world-labels" class="world-labels" aria-hidden="true"></div>
+    <div id="explainLine" class="explain-line" role="status" aria-live="polite"></div>
+    <div id="world-loading" class="world-loading">Loading the connectome&hellip;</div>
+    <div id="overlay-toggles" class="overlay-toggles" role="group" aria-label="Overlays">
+        <button class="overlay-btn" data-overlay="scent" aria-pressed="false" title="Show the odor field">Scent</button>
+        <button class="overlay-btn active" data-overlay="danger" aria-pressed="true" title="Show webs the fly can see">Danger</button>
+        <button class="overlay-btn active" data-overlay="trail" aria-pressed="true" title="Show the fly's recent path">Trail</button>
+        <button class="overlay-btn" data-overlay="neural" aria-pressed="false" title="Show odor and threat readouts around the fly">Neural</button>
+    </div>
     <div id="zoom-controls" class="zoom-controls">
         <button class="zoom-btn" id="zoomIn">+</button>
         <button class="zoom-btn" id="zoomOut">&minus;</button>
+    </div>
+    <div id="world-inspector" class="world-inspector" style="display:none;">
+        <div class="wi-header">
+            <span class="wi-title">Garden inspector</span>
+            <button class="wi-close" id="wiClose" aria-label="Close inspector">&times;</button>
+        </div>
+        <div class="wi-tabs" role="tablist">
+            <button class="wi-tab active" data-tab="trace" role="tab">Trace</button>
+            <button class="wi-tab" data-tab="events" role="tab">Events</button>
+            <button class="wi-tab" data-tab="experiment" role="tab">Experiment</button>
+            <button class="wi-tab" data-tab="inspect" role="tab">Inspect</button>
+        </div>
+        <div class="wi-panel" data-panel="trace">
+            <canvas id="wiTrace" class="wi-trace" width="360" height="330"></canvas>
+            <div class="wi-legend" id="wiLegend"></div>
+            <div class="wi-note" id="wiContrib"></div>
+        </div>
+        <div class="wi-panel" data-panel="events" style="display:none;">
+            <div class="wi-events" id="wiEvents"></div>
+        </div>
+        <div class="wi-panel" data-panel="experiment" style="display:none;">
+            <label class="wi-row">Scenario
+                <select id="wiScenario"></select>
+            </label>
+            <div class="wi-note" id="wiScenarioNote"></div>
+            <label class="wi-row">Seed <input id="wiSeed" type="number" min="1" step="1" value="1"></label>
+            <label class="wi-row">Steering
+                <select id="wiMode">
+                    <option value="hybrid">Connectome + modeled circuit</option>
+                    <option value="connectome">Connectome readout only</option>
+                </select>
+            </label>
+            <label class="wi-row">Speed
+                <select id="wiSpeed">
+                    <option value="0.5">0.5&times;</option>
+                    <option value="1" selected>1&times;</option>
+                    <option value="2">2&times;</option>
+                    <option value="4">4&times;</option>
+                </select>
+            </label>
+            <div class="wi-row wi-checks">
+                <span>Silence</span>
+                <label><input type="checkbox" data-silence="foodInput"> food input</label>
+                <label><input type="checkbox" data-silence="threatInput"> threat input</label>
+                <label><input type="checkbox" data-silence="motorOutput"> motor output</label>
+            </div>
+            <div class="wi-row wi-buttons">
+                <button class="tool-btn" id="wiRun">Start run</button>
+                <button class="tool-btn" id="wiReplay" title="Re-run the current log from a reset brain and compare">Replay</button>
+                <button class="tool-btn" id="wiExport">Export log</button>
+            </div>
+            <div class="wi-note" id="wiRunInfo"></div>
+            <div class="wi-note" id="wiValidation"></div>
+        </div>
+        <div class="wi-panel" data-panel="inspect" style="display:none;">
+            <div class="wi-selection" id="wiSelection">Choose Observe, then click a fruit, a web or the fly.</div>
+        </div>
     </div>
     <div id="education-panel" class="education-panel" style="display:none;">
         <div class="education-panel-header">
@@ -129,19 +213,29 @@
     <!-- Three.js v0.128.0 (vendored) -- do NOT upgrade one without the other -->
     <script src="./js/vendor/three.min.js"></script>
     <script src="./js/vendor/OrbitControls.js"></script>
-    <script type="text/javascript" src="./js/constants.js?v=17"></script>
-    <script type="text/javascript" src="./js/connectome.js?v=17"></script>
-    <script type="text/javascript" src="./js/brain-worker-bridge.js?v=17"></script>
-    <script type="text/javascript" src="./js/neuro-renderer.js?v=17"></script>
-    <script type="text/javascript" src="./js/fly-logic.js?v=17"></script>
-    <script type="text/javascript" src="./js/brain3d.js?v=17"></script>
-    <script type="text/javascript" src="./js/education.js?v=17"></script>
-    <script type="text/javascript" src="./js/main.js?v=17"></script>
-    <script type="text/javascript" src="./js/caretaker-renderer.js?v=17"></script>
-    <script type="text/javascript" src="./js/caretaker-sidebar.js?v=17"></script>
-    <script type="text/javascript" src="./js/caretaker-analytics.js?v=17"></script>
-    <script type="text/javascript" src="./js/caretaker-calendar.js?v=17"></script>
-    <script type="text/javascript" src="./js/caretaker-bridge.js?v=17"></script>
+    <script type="text/javascript" src="./js/constants.js?v=18"></script>
+    <script type="text/javascript" src="./js/connectome.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-config.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-state.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-physics.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-senses.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-brain-adapter.js?v=18"></script>
+    <script type="text/javascript" src="./js/simulation-clock.js?v=18"></script>
+    <script type="text/javascript" src="./js/brain-worker-bridge.js?v=18"></script>
+    <script type="text/javascript" src="./js/neuro-renderer.js?v=18"></script>
+    <script type="text/javascript" src="./js/fly-logic.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-sim.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-renderer.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-renderer-2d.js?v=18"></script>
+    <script type="text/javascript" src="./js/world-inspector.js?v=18"></script>
+    <script type="text/javascript" src="./js/brain3d.js?v=18"></script>
+    <script type="text/javascript" src="./js/education.js?v=18"></script>
+    <script type="text/javascript" src="./js/main.js?v=18"></script>
+    <script type="text/javascript" src="./js/caretaker-renderer.js?v=18"></script>
+    <script type="text/javascript" src="./js/caretaker-sidebar.js?v=18"></script>
+    <script type="text/javascript" src="./js/caretaker-analytics.js?v=18"></script>
+    <script type="text/javascript" src="./js/caretaker-calendar.js?v=18"></script>
+    <script type="text/javascript" src="./js/caretaker-bridge.js?v=18"></script>
 </body>
 
 </html>

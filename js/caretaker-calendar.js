@@ -155,7 +155,7 @@
       var p = {};
       try { if (params) p = JSON.parse(params); } catch (e) { /* ignore */ }
       switch (action) {
-        case 'place_food': desc = 'Placed food at (' + Math.round(p.x || 0) + ', ' + Math.round(p.y || 0) + ')'; break;
+        case 'place_food': desc = p.z !== undefined ? 'Placed fruit at (' + Math.round(p.x || 0) + ', ' + Math.round(p.z) + ') BL' : 'Placed food at (' + Math.round(p.x || 0) + ', ' + Math.round(p.y || 0) + ')'; break;
         case 'clear_food': desc = 'Cleared all food'; break;
         case 'set_light': desc = 'Set light to ' + (p.level || 'unknown'); break;
         case 'set_temp': desc = 'Set temp to ' + (p.level || 'unknown'); break;

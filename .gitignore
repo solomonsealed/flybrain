@@ -4,7 +4,12 @@ extract_weights_to_json.py
 node_modules/
 caretaker.log
 caretaker-decisions.log
-data/
+# data/ holds the FlyWire export; its tracked files were added explicitly.
+# The generated neuron sidecar is tracked too, so fresh checkouts get a
+# matching pair (rebuild with scripts/build_neuron_sidecar.py).
+data/*
+!data/neuron_sidecar.json
+!data/neuron_sidecar.bin.gz
 
 # Xcode
 ios/FlyBrain.xcodeproj/xcuserdata/

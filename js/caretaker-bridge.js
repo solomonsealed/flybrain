@@ -1,25 +1,84 @@
 (function() {
+  // Caretaker WebSocket bridge. State and commands use the garden's world
+  // coordinates (coordinateVersion "world-bl-v1": body lengths, x east,
+  // z south). Legacy screen-coordinate commands ({x, y} in CSS pixels) are
+  // still accepted and converted through the current camera.
   var WS_URL = 'ws://' + (location.hostname || 'localhost') + ':7600';
   var STATE_INTERVAL = 1000;
   var RECONNECT_DELAY = 3000;
   var ws = null, stateTimer = null, reconnectTimer = null, connected = false;
 
+  function app() { return window.FlyWorldApp; }
+
+  // The most recent cause of defensive activity, so web-caused fear is not
+  // blamed on a caretaker action that happened to precede it.
+  var DEFENSIVE_EVENTS = { 'silk-contact': 1, touch: 1, wind: 1, 'web-placed': 1 };
+  function fearAttribution(st) {
+    for (var i = st.events.length - 1; i >= 0; i--) {
+      var e = st.events[i];
+      if (st.time - e.t > 10) break;
+      if (DEFENSIVE_EVENTS[e.type]) {
+        return { source: e.source === 'world' ? 'web' : e.source, event: e.type, simTime: e.t, secondsAgo: st.time - e.t };
+      }
+      if (e.type === 'behavior' && e.data.to === 'startle' && /threat/.test(e.data.reason || '')) {
+        return { source: 'web', event: 'visual-threat', simTime: e.t, secondsAgo: st.time - e.t };
+      }
+    }
+    return null;
+  }
+
+  function legacyBehaviorName(b) {
+    return b === 'snagged' ? 'startle' : b;
+  }
+
   function getState() {
+    var a = app();
+    var st = a.getState(), cfg = a.config, fly = st.fly;
+    var scr = a.worldToScreen(fly.x, fly.y, fly.z) || { x: 0, y: 0 };
+    var food = [];
+    var canopy = 0;
+    for (var i = 0; i < st.fruits.length; i++) {
+      var f = st.fruits[i];
+      if (f.stage === 'attached') { canopy++; continue; }
+      if (!WorldState.isEdible(f)) continue;   // only reachable, edible fruit counts
+      var fs = a.worldToScreen(f.x, 0, f.z) || { x: 0, y: 0 };
+      food.push({ id: f.id, x: f.x, z: f.z, species: f.species, stage: f.stage,
+        remaining: f.amount, eaten: 1 - f.amount, radius: f.radius, source: f.source, screen: { x: fs.x, y: fs.y } });
+    }
+    var enterAgo = st.time - st.behavior.enterTime;
     return {
-      drives: { hunger: BRAIN.drives.hunger, fear: BRAIN.drives.fear,
-        fatigue: BRAIN.drives.fatigue, curiosity: BRAIN.drives.curiosity, groom: BRAIN.drives.groom },
-      behavior: { current: behavior.current, enterTime: behavior.enterTime,
-        groomLocation: behavior.groomLocation },
-      position: { x: fly.x, y: fly.y, facingDir: facingDir, speed: speed },
+      coordinateVersion: cfg.coordinateVersion,
+      world: { bounds: cfg.bounds, units: 'body_lengths', axes: 'x east, z south, altitude up; heading 0 = east, counter-clockwise seen from above' },
+      simTime: st.time,
+      brain: { kind: a.brain.kind, steering: a.run.mode },
+      drives: { hunger: st.drives.hunger, fear: st.drives.fear, fatigue: st.drives.fatigue,
+        curiosity: st.drives.curiosity, groom: st.drives.groom },
+      behavior: { current: legacyBehaviorName(st.behavior.current), state: st.behavior.current,
+        enterTime: Date.now() - enterAgo * 1000, simEnterTime: st.behavior.enterTime, groomLocation: st.behavior.groomLocation },
+      position: { x: fly.x, z: fly.z, altitude: fly.y, heading: fly.heading, facingDir: fly.heading, speed: fly.speed,
+        screen: { x: scr.x, y: scr.y } },
       firingStats: { firedNeurons: BRAIN.workerFiredNeurons || 0 },
-      food: food.map(function(f) { return { x: f.x, y: f.y, radius: f.radius, eaten: f.eaten }; }),
-      environment: { lightLevel: lightStateIndex, temperature: tempStateIndex }
+      food: food,
+      canopyFruit: canopy,
+      webs: st.webs.map(function (w) { return { id: w.id, x: w.x, z: w.z, source: w.source, contacts: w.contacts }; }),
+      fearAttribution: fearAttribution(st),
+      environment: { lightLevel: a.lightIndex(), temperature: a.tempIndex() }
     };
   }
 
   function sendState() {
     if (ws === null || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: 'state', data: getState() }));
+  }
+
+  // Resolves {x, z} in world BL from world params or legacy screen params.
+  function worldPoint(params) {
+    if (params.coords === 'world' || params.z !== undefined) {
+      if (!isFinite(params.x) || !isFinite(params.z)) return null;
+      return { x: params.x, z: params.z };
+    }
+    if (isFinite(params.x) && isFinite(params.y)) return app().screenToGround(params.x, params.y);
+    return null;
   }
 
   function executeCommand(raw) {
@@ -29,58 +88,53 @@
       return;
     }
     if (msg.type !== 'command') return;
+    var a = app();
+    if (!a) return;
     var action = msg.action, params = msg.params || {};
     var lightMap = { bright: 0, dim: 1, dark: 2 };
     var tempMap = { neutral: 0, warm: 1, cool: 2 };
+    var result = { ok: true }, at = null;
     switch (action) {
       case 'place_food':
-        var fx = Math.max(0, Math.min(window.innerWidth, params.x));
-        var fy = Math.max(44, Math.min(window.innerHeight, params.y));
-        food.push({ x: fx, y: fy, radius: 10, feedStart: 0, feedDuration: 0, eaten: 0 });
+        at = worldPoint(params);
+        if (!at) { result = { ok: false, error: 'place_food: point is outside the garden' }; break; }
+        result = a.command({ type: 'placeFruit', params: { x: at.x, z: at.z }, source: 'caretaker' });
         break;
       case 'set_light':
-        if (lightMap.hasOwnProperty(params.level)) {
-          var li = lightMap[params.level];
-          lightStateIndex = li;
-          BRAIN.stimulate.lightLevel = lightStates[li];
-          document.getElementById('lightBtn').textContent = 'Light: ' + lightLabels[li];
-        } else if (typeof params.level === 'number' && params.level >= 0 && params.level <= 2) {
-          var li2 = params.level;
-          lightStateIndex = li2;
-          BRAIN.stimulate.lightLevel = lightStates[li2];
-          document.getElementById('lightBtn').textContent = 'Light: ' + lightLabels[li2];
-        }
+        var li = lightMap.hasOwnProperty(params.level) ? lightMap[params.level] : params.level;
+        if (typeof li === 'number' && li >= 0 && li <= 2) a.setLightIndex(li, 'caretaker');
+        else result = { ok: false, error: 'set_light: unknown level' };
         break;
       case 'set_temp':
-        if (tempMap.hasOwnProperty(params.level)) {
-          var ti = tempMap[params.level];
-          tempStateIndex = ti;
-          BRAIN.stimulate.temperature = tempStates[ti];
-          document.getElementById('tempBtn').textContent = 'Temp: ' + tempLabels[ti];
-        } else if (typeof params.level === 'number' && params.level >= 0 && params.level <= 2) {
-          var ti2 = params.level;
-          tempStateIndex = ti2;
-          BRAIN.stimulate.temperature = tempStates[ti2];
-          document.getElementById('tempBtn').textContent = 'Temp: ' + tempLabels[ti2];
-        }
+        var ti = tempMap.hasOwnProperty(params.level) ? tempMap[params.level] : params.level;
+        if (typeof ti === 'number' && ti >= 0 && ti <= 2) a.setTempIndex(ti, 'caretaker');
+        else result = { ok: false, error: 'set_temp: unknown level' };
         break;
       case 'touch':
-        applyTouchTool(params.x !== undefined ? params.x : fly.x, params.y !== undefined ? params.y : fly.y);
+        result = a.command({ type: 'touch', params: { location: params.location || 'thorax', side: params.side || 'both' }, source: 'caretaker' });
+        at = { x: a.getState().fly.x, z: a.getState().fly.z };
         break;
       case 'blow_wind':
-        BRAIN.stimulate.wind = true;
-        BRAIN.stimulate.windStrength = Math.min(1, Math.max(0, params.strength || 0.5));
-        BRAIN.stimulate.windDirection = params.direction || 0;
-        windResetTime = Date.now() + 2000;
+        // direction in degrees, world frame: 0 = toward east (+x), 90 = toward south (+z)
+        var deg = Number(params.direction) || 0;
+        var rad = deg * Math.PI / 180;
+        result = a.command({ type: 'wind', params: { dirX: Math.cos(rad), dirZ: Math.sin(rad),
+          strength: Math.min(1, Math.max(0, params.strength === undefined ? 0.5 : params.strength)), duration: 2 }, source: 'caretaker' });
+        at = { x: a.getState().fly.x, z: a.getState().fly.z };
         break;
       case 'clear_food':
-        food.length = 0;
+        result = a.command({ type: 'clearFruit', source: 'caretaker' });
         break;
       default:
         console.warn('[caretaker] Unknown action:', action);
+        result = { ok: false, error: 'unknown action' };
     }
-    if (typeof CaretakerRenderer !== 'undefined') {
-      CaretakerRenderer.onCommand(action, params);
+    if (!result.ok) console.warn('[caretaker] ' + action + ' rejected: ' + result.error);
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'command_result', action: action, ok: result.ok, error: result.error || null }));
+    }
+    if (typeof CaretakerRenderer !== 'undefined' && result.ok) {
+      CaretakerRenderer.onCommand(action, params, at);
     }
   }
 
@@ -131,11 +185,11 @@
       console.log('[caretaker] Skipping WebSocket connection in file:// context (iOS/local)');
       return;
     }
-    if (typeof BRAIN !== 'undefined' && BRAIN.drives) { connect(); return; }
+    if (window.FlyWorldApp) { connect(); return; }
     setTimeout(init, 500);
   }
 
   init();
-  window.caretakerBridge = { getState: getState, connect: connect,
+  window.caretakerBridge = { getState: getState, connect: connect, executeCommand: executeCommand,
     isConnected: function() { return connected; } };
 })();

@@ -1,0 +1,113 @@
+{
+ "generated": "2026-09-11T06:26:15.669Z",
+ "chrome": "Chrome/154.0.8037.17",
+ "host": {
+  "platform": "darwin",
+  "arch": "arm64",
+  "cpus": "Apple M1",
+  "cores": 8,
+  "memGB": 8
+ },
+ "note": "Headless Chrome on the development machine. Mobile Safari and the bundled WKWebView were not measured here.",
+ "samples": [
+  {
+   "frames": 600,
+   "frameMsP50": 16.700000762939453,
+   "frameMsP95": 16.700000762939453,
+   "frameMsP99": 16.799999237060547,
+   "fpsP50": 59.880236785329636,
+   "drawCalls": 144,
+   "triangles": 31664,
+   "geometries": 57,
+   "textures": 13,
+   "brainStepMs": 1.2999999821186066,
+   "roundTripMs": 1.7321070757716956,
+   "simWallRatio": 1.0000349714260206,
+   "stalls": 0,
+   "jsHeapMB": 16.81083583831787,
+   "renderer": "webgl",
+   "pixelRatio": 1,
+   "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+   "label": "desktop 1400x900, garden + 139K neuron view",
+   "viewport": {
+    "width": 1400,
+    "height": 900
+   }
+  },
+  {
+   "frames": 600,
+   "frameMsP50": 16.700000762939453,
+   "frameMsP95": 16.700000762939453,
+   "frameMsP99": 16.799999237060547,
+   "fpsP50": 59.880236785329636,
+   "drawCalls": 55,
+   "triangles": 25176,
+   "geometries": 57,
+   "textures": 13,
+   "brainStepMs": 1.300000011920929,
+   "roundTripMs": 3.611197481944129,
+   "simWallRatio": 1.000072073197876,
+   "stalls": 0,
+   "jsHeapMB": 12.899541854858398,
+   "renderer": "webgl",
+   "pixelRatio": 1,
+   "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+   "label": "desktop 1400x900, 139K view off, follow camera",
+   "viewport": {
+    "width": 1400,
+    "height": 900
+   }
+  },
+  {
+   "frames": 600,
+   "frameMsP50": 16.700000762939453,
+   "frameMsP95": 16.799999237060547,
+   "frameMsP99": 16.799999237060547,
+   "fpsP50": 59.880236785329636,
+   "drawCalls": 144,
+   "triangles": 31664,
+   "geometries": 57,
+   "textures": 13,
+   "brainStepMs": 1.4000000059604645,
+   "roundTripMs": 1.9750633667539936,
+   "simWallRatio": 1.0000816271715691,
+   "stalls": 0,
+   "jsHeapMB": 18.58738613128662,
+   "renderer": "webgl",
+   "pixelRatio": 1,
+   "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+   "label": "desktop 1400x900, Brain 3D open (garden render suspended) + 139K view: three WebGL contexts",
+   "viewport": {
+    "width": 1400,
+    "height": 900
+   }
+  },
+  {
+   "frames": 600,
+   "frameMsP50": 16.700000762939453,
+   "frameMsP95": 16.700000762939453,
+   "frameMsP99": 16.799999237060547,
+   "fpsP50": 59.880236785329636,
+   "drawCalls": 144,
+   "triangles": 31664,
+   "geometries": 57,
+   "textures": 13,
+   "brainStepMs": 1.199999988079071,
+   "roundTripMs": 1.8082163306318815,
+   "simWallRatio": 1.0000310749691177,
+   "stalls": 0,
+   "jsHeapMB": 19.389657974243164,
+   "renderer": "webgl",
+   "pixelRatio": 3,
+   "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/154.0.0.0 Safari/537.36",
+   "label": "phone viewport 390x844 @3x (emulated on desktop)",
+   "viewport": {
+    "width": 390,
+    "height": 844,
+    "deviceScaleFactor": 3,
+    "mobile": true,
+    "touch": true
+   }
+  }
+ ]
+}
