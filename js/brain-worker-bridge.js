@@ -1,12 +1,19 @@
-/* brain-worker-bridge.js — T7.4
+/* brain-worker-bridge.js — T7.4 + garden world loader
  *
  * Bridges the main-thread behavioral layer (connectome.js, fly-logic.js, main.js)
- * to the LIF Web Worker (sim-worker.js). Loads the full connectome binary,
- * initializes the worker, translates BRAIN.stimulate/drives to worker messages,
- * and aggregates worker fire states back into BRAIN.postSynaptic format.
+ * to the LIF Web Worker (sim-worker.js).
+ *
+ * Garden mode (default): BRAIN.workerBridge.load() fetches and validates the
+ * paired connectome assets (binary, group metadata, neuron sidecar), starts
+ * the worker in step mode, and resolves with everything the world brain
+ * adapter needs. The garden simulation then drives the worker one step at a
+ * time; displayWorldStep() mirrors each step into BRAIN.postSynaptic so the
+ * neuron panel and Brain 3D show recorded activity.
+ *
+ * Legacy free-running mode (initBridge/workerUpdate) is kept for the test
+ * suite and as documentation of the earlier pipeline.
  *
  * Loaded after connectome.js, before fly-logic.js and main.js.
- * Falls back to legacy BRAIN.update() if connectome.bin.gz fails to load.
  */
 
 (function () {
@@ -39,7 +46,8 @@
 				}
 			};
 			xhr.onload = function () {
-				if (xhr.status >= 200 && xhr.status < 300) {
+				// status 0 with a body: file:// load in the iOS WKWebView
+				if ((xhr.status >= 200 && xhr.status < 300) || (xhr.status === 0 && xhr.response && xhr.response.byteLength)) {
 					resolve(xhr.response);
 				} else {
 					reject(new Error('HTTP ' + xhr.status + ' fetching ' + url));
@@ -68,6 +76,7 @@
 	/* ---- saved legacy reference ---- */
 
 	var legacyUpdate = BRAIN.update;
+	BRAIN.legacyUpdate = legacyUpdate;
 
 	/* ---- module state ---- */
 
@@ -609,6 +618,189 @@
 	BRAIN.stopWorker = stopWorker;
 	BRAIN.startWorker = startWorker;
 
+	/* ---- garden world: asset loading and validation ---- */
+
+	// XHR rather than fetch: the iOS app loads the site from file:// URLs,
+	// where WKWebView's fetch is unreliable but XHR works.
+	function fetchJson(url) {
+		return new Promise(function (resolve, reject) {
+			var xhr = new XMLHttpRequest();
+			xhr.open('GET', url, true);
+			xhr.onload = function () {
+				var okStatus = (xhr.status >= 200 && xhr.status < 300) || (xhr.status === 0 && xhr.responseText);
+				if (!okStatus) { reject(new Error('HTTP ' + xhr.status + ' fetching ' + url)); return; }
+				try { resolve(JSON.parse(xhr.responseText)); } catch (e) { reject(e); }
+			};
+			xhr.onerror = function () { reject(new Error('Network error fetching ' + url)); };
+			xhr.send();
+		});
+	}
+
+	function fetchOptionalBinary(url) {
+		return fetchBinaryWithProgress(url, function () {}).then(null, function () { return null; });
+	}
+
+	function gunzip(buffer) {
+		var ds = new DecompressionStream('gzip');
+		return new Response(new Blob([buffer]).stream().pipeThrough(ds)).arrayBuffer();
+	}
+
+	function sha256Hex(buffer) {
+		if (typeof crypto === 'undefined' || !crypto.subtle || !crypto.subtle.digest) return Promise.resolve(null);
+		return crypto.subtle.digest('SHA-256', buffer).then(function (h) {
+			var b = new Uint8Array(h), out = '';
+			for (var i = 0; i < b.length; i++) out += (b[i] < 16 ? '0' : '') + b[i].toString(16);
+			return out;
+		}, function () { return null; });
+	}
+
+	// Loads connectome.bin.gz, neuron_meta.json and (optionally) the neuron
+	// sidecar, validates that they describe the same neurons, and starts the
+	// worker in step mode. Resolves with
+	//   { worker, ready, meta, manifest, sidecar, hashes, validation }
+	function loadWorldAssets(opts) {
+		opts = opts || {};
+		var base = opts.base || 'data/';
+		var onProgress = opts.onProgress || updateLoadingProgress;
+		var out = { hashes: {} };
+		return fetchJson(base + 'neuron_meta.json').then(function (meta) {
+			out.meta = meta;
+			groupCount = meta.group_count;
+			groupSizes = meta.group_sizes;
+			for (var i = 0; i < meta.groups.length; i++) {
+				groupNameToId[meta.groups[i].name] = meta.groups[i].id;
+				groupIdToName[meta.groups[i].id] = meta.groups[i].name;
+			}
+			return Promise.all([
+				fetchBinaryWithProgress(base + 'connectome.bin.gz', onProgress),
+				fetchJson(base + 'neuron_sidecar.json').then(null, function () { return null; }),
+				fetchOptionalBinary(base + 'neuron_sidecar.bin.gz')
+			]);
+		}).then(function (parts) {
+			var bin = parts[0];
+			out.manifest = parts[1];
+			return sha256Hex(bin).then(function (hash) {
+				if (hash) out.hashes['connectome.bin.gz'] = hash;
+				var sidecarPromise = parts[2] && out.manifest ? gunzip(parts[2]) : Promise.resolve(null);
+				return sidecarPromise.then(function (sidecarRaw) {
+					if (sidecarRaw && typeof WorldBrainAdapter !== 'undefined') {
+						try { out.sidecar = WorldBrainAdapter.parseSidecar(sidecarRaw); }
+						catch (e) { console.warn('Neuron sidecar rejected:', e.message); out.sidecar = null; }
+					}
+					return startStepWorker(bin);
+				});
+			});
+		}).then(function (w) {
+			out.worker = w.worker;
+			out.ready = w.ready;
+			if (typeof WorldBrainAdapter !== 'undefined') {
+				out.validation = WorldBrainAdapter.validateAssets(out);
+				if (!out.validation.ok) console.warn('Connectome asset validation failed', out.validation.checks);
+				if (out.sidecar && !out.validation.ok) {
+					// Never guess an index mapping: drop directional populations.
+					out.sidecar = null;
+					out.manifest = null;
+				}
+			}
+			var subtitle = document.getElementById('connectomeSubtitle');
+			if (subtitle) {
+				subtitle.textContent = out.ready.neuronCount.toLocaleString() + ' neurons / ' +
+					out.ready.edgeCount.toLocaleString() + ' connections \u2014 FlyWire FAFB v783';
+				subtitle.classList.remove('loading');
+			}
+			return out;
+		});
+	}
+
+	function startStepWorker(buffer) {
+		return new Promise(function (resolve, reject) {
+			var subtitle = document.getElementById('connectomeSubtitle');
+			if (subtitle) subtitle.textContent = 'Parsing connectome...';
+			var w = new Worker('js/sim-worker.js');
+			worker = w;
+			w.onmessage = function (e) {
+				if (e.data.type === 'ready') {
+					neuronCount = e.data.neuronCount;
+					groupIdArr = new Uint16Array(e.data.groupId);
+					regionTypeArr = new Uint8Array(e.data.regionType);
+					pendingGroupSpikes = new Float32Array(groupCount);
+					pendingWorkerTicks = 0;
+					buildGroupIndices();
+					workerReady = true;
+					BRAIN.workerReady = true;
+					BRAIN.workerNeuronCount = neuronCount;
+					BRAIN.workerRegionType = regionTypeArr;
+					BRAIN.workerGroupIdArr = groupIdArr;
+					BRAIN.workerGroupIdToName = groupIdToName;
+					BRAIN.workerGroupSizes = groupSizes;
+					BRAIN.workerEdgeCount = e.data.edgeCount;
+					for (var ps in BRAIN.postSynaptic) {
+						BRAIN.postSynaptic[ps][0] = 0;
+						BRAIN.postSynaptic[ps][1] = 0;
+					}
+					w.onmessage = routeWorkerMessage;
+					w.onerror = function (err) { handleStepWorkerFailure(new Error(err.message || 'worker crashed')); };
+					resolve({ worker: w, ready: e.data });
+				} else if (e.data.type === 'error') {
+					reject(new Error(e.data.message));
+				}
+			};
+			w.onerror = function (err) { reject(new Error(err.message || 'worker failed to start')); };
+			w.postMessage({ type: 'init', buffer: buffer }, [buffer]);
+		});
+	}
+
+	// After startup, stats go to the subtitle; step results are routed by the
+	// world adapter (which wraps onmessage); errors mark the worker failed.
+	function routeWorkerMessage(e) {
+		if (e.data.type === 'stats') {
+			BRAIN.workerStats = e.data;
+		} else if (e.data.type === 'error') {
+			handleStepWorkerFailure(new Error(e.data.message));
+		}
+	}
+
+	var failureListeners = [];
+	function handleStepWorkerFailure(err) {
+		console.warn('Connectome worker failed:', err.message || err);
+		workerReady = false;
+		BRAIN.workerReady = false;
+		for (var i = 0; i < failureListeners.length; i++) failureListeners[i](err);
+	}
+
+	// Mirrors one garden neural step into BRAIN.postSynaptic for displays.
+	// `virtual` fills groups with no neurons in the export (drives, VNC motor
+	// groups) from the modeled state, which the UI labels as modeled.
+	function displayWorldStep(result, virtual) {
+		if (!result || !result.groupSpikeCounts) return;
+		pendingGroupSpikes = pendingGroupSpikes || new Float32Array(groupCount);
+		for (var g = 0; g < groupCount; g++) pendingGroupSpikes[g] = result.groupSpikeCounts[g] || 0;
+		pendingWorkerTicks = result.ticks || 1;
+		latestFireState = null;
+		aggregateFireState();
+		if (virtual) {
+			for (var name in virtual) {
+				if (BRAIN.postSynaptic[name]) BRAIN.postSynaptic[name][BRAIN.nextState] = virtual[name] * FIRE_STATE_SCALE;
+			}
+		}
+		for (var ps in BRAIN.postSynaptic) {
+			BRAIN.postSynaptic[ps][BRAIN.thisState] = BRAIN.postSynaptic[ps][BRAIN.nextState];
+		}
+		var temp = BRAIN.thisState;
+		BRAIN.thisState = BRAIN.nextState;
+		BRAIN.nextState = temp;
+		if (result.fireState) BRAIN.latestFireState = result.fireState;
+		BRAIN.workerFiredNeurons = result.firedNeurons || 0;
+	}
+
+	BRAIN.workerBridge = {
+		load: loadWorldAssets,
+		displayWorldStep: displayWorldStep,
+		onFailure: function (fn) { failureListeners.push(fn); },
+		fail: handleStepWorkerFailure,
+		worker: function () { return worker; }
+	};
+
 	/* ---- start / test mode ---- */
 
 	if (BRAIN._testMode) {
@@ -645,8 +837,7 @@
 				return groupIndices;
 			},
 		};
-	} else {
-		initBridge();
 	}
+	// Non-test pages call BRAIN.workerBridge.load() (garden) themselves.
 
 })();

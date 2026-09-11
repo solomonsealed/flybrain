@@ -39,7 +39,11 @@ function detectIncidents(state) {
   var fear = state.drives.fear;
   var hunger = state.drives.hunger;
   var foodCount = state.food.length;
-  if (lastActionTime > 0 && Date.now() - lastActionTime < 5000 && fear - preFearLevel > 0.2) {
+  // The browser reports what last caused defensive activity. Only blame the
+  // caretaker when its own action is the recorded cause (not a spiderweb).
+  var attribution = state.fearAttribution || null;
+  var blameCaretaker = !attribution || attribution.source === 'caretaker';
+  if (lastActionTime > 0 && Date.now() - lastActionTime < 5000 && fear - preFearLevel > 0.2 && blameCaretaker) {
     caretakerDb.insertIncident(now, 'scared_the_fly', 'high',
       'Fear spiked from ' + preFearLevel.toFixed(2) + ' to ' + fear.toFixed(2) + ' after ' + lastActionType,
       state);

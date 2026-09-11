@@ -90,7 +90,8 @@
     }
     switch (action) {
       case 'place_food':
-        return 'Placed food at (' + Math.round(p.x) + ', ' + Math.round(p.y) + ')';
+        return p.z !== undefined ? 'Placed fruit at (' + Math.round(p.x) + ', ' + Math.round(p.z) + ') BL'
+          : 'Placed food at (' + Math.round(p.x) + ', ' + Math.round(p.y) + ')';
       case 'clear_food':
         return 'Cleared all food';
       case 'set_light':

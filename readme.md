@@ -1,20 +1,42 @@
 # FlyBrain
 
-Interactive browser simulation of the *Drosophila melanogaster* (fruit fly) brain. 139,255 neurons and 2.7M connections from the [FlyWire FAFB v783](https://codex.flywire.ai) connectome run in real time via a leaky integrate-and-fire model in a Web Worker.
+Interactive browser simulation of the *Drosophila melanogaster* (fruit fly) brain in a small 3D garden. 139,255 neurons and 2.7M connections from the [FlyWire FAFB v783](https://codex.flywire.ai) connectome run as a leaky integrate-and-fire network in a Web Worker, stepped in lockstep with the fly's body.
 
-The fly is not scripted. Behavior emerges from signal propagation through weighted neural connections: place food and watch it seek, touch it and watch it startle, change the light and watch it navigate.
+A walled orchard, rendered with Three.js, has fruit trees that drop ripe fruit and spiderwebs strung across tempting routes. The fly receives only what it could sense locally: odor at two antennae, taste on contact, a visual cue from webs it can see, touch, wind and light. Those signals stimulate identified neuron populations. Activity read out from the connectome drives a documented motor adapter that moves the fly. Watch a hungry fly follow the smell of fermenting apples, get startled by a web beside them, retreat, and come back.
+
+What is connectome-derived and what is modeled is labeled everywhere: in the brain-mode badge, in the live trace, and in [docs/world-model.md](docs/world-model.md).
 
 ## Usage
 
-Open `index.html` in a browser (or visit the hosted version). The fly loads the full connectome and begins exploring. Use the toolbar to interact:
+Serve the folder over HTTP (for example `python3 -m http.server`) and open `index.html`, or visit the hosted version. The connectome loads, the brain settles, and the fly starts in the sunny clearing.
 
-- **Feed** -- click to place food. The fly seeks and eats it when hungry.
-- **Touch** -- click on the fly. Head, thorax, abdomen, and legs trigger different responses.
-- **Air** -- click and drag near the fly to blow wind.
-- **Light** -- cycle through Bright, Dim, Dark. The fly exhibits phototaxis.
-- **Temp** -- cycle through Neutral, Warm, Cool.
+- **Observe** -- click a fruit, web or the fly to see ripeness, remaining food, how visible a web is, or what the fly senses.
+- **Fruit** -- click the ground to drop ripe fruit. Only eating reduces hunger.
+- **Web** -- hang a web facing the fly, or click one to take it down.
+- **Touch / Air** -- touch the fly, or drag to blow a gust.
+- **Light / Temp** -- dim the garden, or warm and cool it.
+- **Follow / Pause / Reset** -- follow camera; pause world and brain together; new run.
+- **Inspect** -- live traces of senses, neural readouts and motor output; an event timeline; repeatable experiments (scenario, seed, steering mode, neural silencing, replay, log export).
 
-The bottom panel shows all 139K neurons firing in real time (WebGL), grouped by region: Sensory, Central, Drives, Motor.
+Drag to pan, scroll to zoom, right-drag to orbit. **F** follows the fly and **R** resets the view. The bottom panel shows all 139K neurons firing (WebGL). **Brain 3D** shows the same recorded activity on a 3D brain.
+
+URL options: `?seed=3&scenario=webPatch&mode=connectome`, `?renderer=2d`, `?brain=legacy`.
+
+## Documentation
+
+- [docs/world-model.md](docs/world-model.md) -- architecture, sensory model, neural encoding and readouts, the modeled motor adapter, limitations, data provisioning.
+- [docs/connectome-baseline.md](docs/connectome-baseline.md) -- asset validation, weight calibration, and evidence (or limitations) for each sensory pathway.
+- [docs/world-experiments.md](docs/world-experiments.md) -- hungry versus satiated flies, fruit beside a web, hidden versus visible webs, recovery, interventions, and neural controls across seeds.
+
+## Tests and tools
+
+```sh
+node tests/run-node.js                         # unit, world and real-worker integration tests
+node tests/browser/run-browser-tests.js        # headless-Chrome scenarios (CHROME_PATH to override)
+node tools/connectome-baseline.js              # regenerate docs/connectome-baseline.*
+node tools/world-experiments.js --seeds 10     # regenerate docs/world-experiments.*
+python3 scripts/build_neuron_sidecar.py        # rebuild the hemisphere/identity sidecar (needs numpy)
+```
 
 ## Data Source
 
@@ -22,7 +44,7 @@ Connectome data from the FlyWire Whole-Brain Connectome:
 
 > Dorkenwald, S., Matsliah, A., Sterling, A.R. *et al.* Neuronal wiring diagram of an adult brain. *Nature* **634**, 124--138 (2024). https://doi.org/10.1038/s41586-024-07558-y
 
-The binary connectome file (`data/neuron_meta.bin.gz`) is derived from the [FlyWire Codex](https://codex.flywire.ai) public dataset (FAFB v783). Neurons are classified into functional groups (sensory, central, drives, motor) based on FlyWire cell type annotations.
+The binary connectome file (`data/connectome.bin.gz`, with `data/neuron_meta.json` and the hemisphere sidecar `data/neuron_sidecar.*`) is derived from the [FlyWire Codex](https://codex.flywire.ai) public dataset (FAFB v783). Neurons are classified into functional groups (sensory, central, drives, motor) based on FlyWire cell type annotations.
 
 ## Origin
 

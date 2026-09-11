@@ -1,0 +1,1816 @@
+{
+ "generated": "2026-09-11T06:35:49.988Z",
+ "node": "v24.9.0",
+ "quick": false,
+ "assets": {
+  "neurons": 139255,
+  "edges": 2698236,
+  "maxAbsWeight": 2405,
+  "hashes": {
+   "connectome": "fbf8d440ca1207c7573e1acdd2366f9d0beb9b533c1710f21681264f81b1cc49",
+   "neuronMeta": "9a2ac45005cd9174d23bcf19f3cc1f6152fea7a87fa60d49d5a2063ccace87bc",
+   "sidecar": "1f70f96e3a8e945dd4d7f9105d048e8366fe85a6f05be86c860a4db5cc90672a"
+  },
+  "sidecarVersion": 1,
+  "validation": {
+   "ok": true,
+   "checks": [
+    {
+     "name": "binary neuron count matches neuron_meta.json",
+     "ok": true,
+     "detail": "139255 vs 139255"
+    },
+    {
+     "name": "binary edge count matches neuron_meta.json",
+     "ok": true,
+     "detail": "2698236 vs 2698236"
+    },
+    {
+     "name": "group sizes match neuron_meta.json",
+     "ok": true,
+     "detail": ""
+    },
+    {
+     "name": "sidecar neuron count matches binary",
+     "ok": true,
+     "detail": ""
+    },
+    {
+     "name": "sidecar was built from these group sizes",
+     "ok": true,
+     "detail": ""
+    },
+    {
+     "name": "connectome.bin.gz hash matches sidecar manifest",
+     "ok": true,
+     "detail": "fbf8d440ca12"
+    },
+    {
+     "name": "sidecar population counts reproduce",
+     "ok": true,
+     "detail": ""
+    }
+   ]
+  }
+ },
+ "groups": [
+  {
+   "name": "VIS_R1R6",
+   "region": "sensory",
+   "neurons": 11487
+  },
+  {
+   "name": "VIS_R7R8",
+   "region": "sensory",
+   "neurons": 0
+  },
+  {
+   "name": "VIS_ME",
+   "region": "sensory",
+   "neurons": 82318
+  },
+  {
+   "name": "VIS_LO",
+   "region": "sensory",
+   "neurons": 1793
+  },
+  {
+   "name": "VIS_LC",
+   "region": "sensory",
+   "neurons": 0
+  },
+  {
+   "name": "VIS_LPTC",
+   "region": "sensory",
+   "neurons": 1907
+  },
+  {
+   "name": "OLF_ORN_FOOD",
+   "region": "sensory",
+   "neurons": 1851
+  },
+  {
+   "name": "OLF_ORN_DANGER",
+   "region": "sensory",
+   "neurons": 430
+  },
+  {
+   "name": "OLF_LN",
+   "region": "sensory",
+   "neurons": 453
+  },
+  {
+   "name": "OLF_PN",
+   "region": "sensory",
+   "neurons": 699
+  },
+  {
+   "name": "MECH_BRISTLE",
+   "region": "sensory",
+   "neurons": 1927
+  },
+  {
+   "name": "MECH_JO",
+   "region": "sensory",
+   "neurons": 879
+  },
+  {
+   "name": "MECH_CHORD",
+   "region": "sensory",
+   "neurons": 0
+  },
+  {
+   "name": "ANTENNAL_MECH",
+   "region": "sensory",
+   "neurons": 0
+  },
+  {
+   "name": "THERMO_WARM",
+   "region": "sensory",
+   "neurons": 49
+  },
+  {
+   "name": "THERMO_COOL",
+   "region": "sensory",
+   "neurons": 54
+  },
+  {
+   "name": "NOCI",
+   "region": "sensory",
+   "neurons": 0
+  },
+  {
+   "name": "MB_KC",
+   "region": "central",
+   "neurons": 5177
+  },
+  {
+   "name": "MB_APL",
+   "region": "central",
+   "neurons": 0
+  },
+  {
+   "name": "MB_MBON_APP",
+   "region": "central",
+   "neurons": 96
+  },
+  {
+   "name": "MB_MBON_AV",
+   "region": "central",
+   "neurons": 0
+  },
+  {
+   "name": "MB_DAN_REW",
+   "region": "central",
+   "neurons": 335
+  },
+  {
+   "name": "MB_DAN_PUN",
+   "region": "central",
+   "neurons": 0
+  },
+  {
+   "name": "LH_APP",
+   "region": "central",
+   "neurons": 559
+  },
+  {
+   "name": "LH_AV",
+   "region": "central",
+   "neurons": 0
+  },
+  {
+   "name": "CX_EPG",
+   "region": "central",
+   "neurons": 428
+  },
+  {
+   "name": "CX_PFN",
+   "region": "central",
+   "neurons": 1244
+  },
+  {
+   "name": "CX_FC",
+   "region": "central",
+   "neurons": 822
+  },
+  {
+   "name": "CX_HDELTA",
+   "region": "central",
+   "neurons": 611
+  },
+  {
+   "name": "SEZ_FEED",
+   "region": "central",
+   "neurons": 34
+  },
+  {
+   "name": "SEZ_GROOM",
+   "region": "central",
+   "neurons": 0
+  },
+  {
+   "name": "SEZ_WATER",
+   "region": "central",
+   "neurons": 0
+  },
+  {
+   "name": "GUS_GRN_SWEET",
+   "region": "central",
+   "neurons": 214
+  },
+  {
+   "name": "GUS_GRN_BITTER",
+   "region": "central",
+   "neurons": 65
+  },
+  {
+   "name": "GUS_GRN_WATER",
+   "region": "central",
+   "neurons": 131
+  },
+  {
+   "name": "GNG_DESC",
+   "region": "central",
+   "neurons": 3581
+  },
+  {
+   "name": "CLOCK_DN",
+   "region": "central",
+   "neurons": 0
+  },
+  {
+   "name": "DRIVE_HUNGER",
+   "region": "drives",
+   "neurons": 46
+  },
+  {
+   "name": "DRIVE_FEAR",
+   "region": "drives",
+   "neurons": 0
+  },
+  {
+   "name": "DRIVE_FATIGUE",
+   "region": "drives",
+   "neurons": 34
+  },
+  {
+   "name": "DRIVE_CURIOSITY",
+   "region": "drives",
+   "neurons": 0
+  },
+  {
+   "name": "DRIVE_GROOM",
+   "region": "drives",
+   "neurons": 0
+  },
+  {
+   "name": "DN_WALK",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "DN_FLIGHT",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "DN_TURN",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "DN_BACKUP",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "DN_STARTLE",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "VNC_CPG",
+   "region": "motor",
+   "neurons": 4
+  },
+  {
+   "name": "MN_LEG_L1",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_LEG_R1",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_LEG_L2",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_LEG_R2",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_LEG_L3",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_LEG_R3",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_WING_L",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_WING_R",
+   "region": "motor",
+   "neurons": 0
+  },
+  {
+   "name": "MN_PROBOSCIS",
+   "region": "motor",
+   "neurons": 24
+  },
+  {
+   "name": "MN_HEAD",
+   "region": "motor",
+   "neurons": 40
+  },
+  {
+   "name": "MN_ABDOMEN",
+   "region": "motor",
+   "neurons": 8
+  },
+  {
+   "name": "GENERIC_SENSORY",
+   "region": "sensory",
+   "neurons": 0
+  },
+  {
+   "name": "GENERIC_CENTRAL",
+   "region": "central",
+   "neurons": 21955
+  },
+  {
+   "name": "GENERIC_DRIVES",
+   "region": "drives",
+   "neurons": 0
+  },
+  {
+   "name": "GENERIC_MOTOR",
+   "region": "motor",
+   "neurons": 0
+  }
+ ],
+ "emptyGroups": [
+  "VIS_R7R8",
+  "VIS_LC",
+  "MECH_CHORD",
+  "ANTENNAL_MECH",
+  "NOCI",
+  "MB_APL",
+  "MB_MBON_AV",
+  "MB_DAN_PUN",
+  "LH_AV",
+  "SEZ_GROOM",
+  "SEZ_WATER",
+  "CLOCK_DN",
+  "DRIVE_FEAR",
+  "DRIVE_CURIOSITY",
+  "DRIVE_GROOM",
+  "DN_WALK",
+  "DN_FLIGHT",
+  "DN_TURN",
+  "DN_BACKUP",
+  "DN_STARTLE",
+  "MN_LEG_L1",
+  "MN_LEG_R1",
+  "MN_LEG_L2",
+  "MN_LEG_R2",
+  "MN_LEG_L3",
+  "MN_LEG_R3",
+  "MN_WING_L",
+  "MN_WING_R",
+  "GENERIC_SENSORY",
+  "GENERIC_DRIVES",
+  "GENERIC_MOTOR"
+ ],
+ "populations": [
+  {
+   "name": "ORN_FOOD",
+   "count": 1851,
+   "left": 912,
+   "right": 925,
+   "provenance": "classification class=olfactory, sub_class != pheromone (same rule as OLF_ORN_FOOD)"
+  },
+  {
+   "name": "ORN_PHEROMONE",
+   "count": 430,
+   "left": 205,
+   "right": 209,
+   "provenance": "classification class=olfactory, sub_class=pheromone"
+  },
+  {
+   "name": "GRN_SUGAR",
+   "count": 129,
+   "left": 67,
+   "right": 62,
+   "provenance": "classification class=gustatory, sub_class=sugar/water (these are in binary group GUS_GRN_WATER; see audit)"
+  },
+  {
+   "name": "GRN_BITTER",
+   "count": 65,
+   "left": 32,
+   "right": 33,
+   "provenance": "classification class=gustatory, sub_class=bitter"
+  },
+  {
+   "name": "MECH_TOUCH",
+   "count": 1719,
+   "left": 864,
+   "right": 855,
+   "provenance": "classification class=mechanosensory, sub_class in eye_bristle/head_bristle/grooming/unlabelled"
+  },
+  {
+   "name": "JO_WIND",
+   "count": 486,
+   "left": 253,
+   "right": 233,
+   "provenance": "classification class=mechanosensory, sub_class=wind_gravity (subset of MECH_JO)"
+  },
+  {
+   "name": "PHOTORECEPTOR",
+   "count": 11487,
+   "left": 5921,
+   "right": 5490,
+   "provenance": "binary group VIS_R1R6; side = eye"
+  },
+  {
+   "name": "VPN_LOOM_PROXY",
+   "count": 3061,
+   "left": 1626,
+   "right": 1435,
+   "provenance": "classification super_class=visual_projection and neurons.csv group in LO.PLP,LO.PVLP,LOP.PLP,LOP.PVLP. Cell types are not annotated locally, so this is a connectivity-level proxy for looming-sensitive LC/LPLC populations, not a verified cell-type set. VIS_LC stays empty."
+  },
+  {
+   "name": "ALPN",
+   "count": 685,
+   "left": 341,
+   "right": 344,
+   "provenance": "classification class=ALPN (same rule as OLF_PN)"
+  },
+  {
+   "name": "LH_NEURON",
+   "count": 559,
+   "left": 277,
+   "right": 282,
+   "provenance": "classification class in LHLN/LHCENT (same rule as LH_APP; valence not annotated)"
+  },
+  {
+   "name": "DN",
+   "count": 1305,
+   "left": 647,
+   "right": 650,
+   "provenance": "classification super_class=descending"
+  },
+  {
+   "name": "DN_ODOR_RANKED",
+   "count": 130,
+   "left": 64,
+   "right": 64,
+   "provenance": "top 10% of descending neurons (130) ranked by 3-hop input-normalized excitatory flow from ORN_FOOD (computed on connectome.bin.gz weights)"
+  },
+  {
+   "name": "DN_LOOM_RANKED",
+   "count": 130,
+   "left": 71,
+   "right": 59,
+   "provenance": "top 10% of descending neurons (130) ranked by 3-hop input-normalized excitatory flow from VPN_LOOM_PROXY (computed on connectome.bin.gz weights)"
+  },
+  {
+   "name": "DN_TOUCH_RANKED",
+   "count": 130,
+   "left": 70,
+   "right": 60,
+   "provenance": "top 10% of descending neurons (130) ranked by 3-hop input-normalized excitatory flow from MECH_TOUCH (computed on connectome.bin.gz weights)"
+  },
+  {
+   "name": "MN_PROBOSCIS",
+   "count": 24,
+   "left": 12,
+   "right": 12,
+   "provenance": "binary group MN_PROBOSCIS"
+  }
+ ],
+ "auditNotes": [
+  "MB_MBON_APP holds every MBON (class=MBON); valence is not annotated locally, so it is not used as an approach readout.",
+  "LH_APP holds all LHLN/LHCENT neurons regardless of valence; LH_AV is empty.",
+  "GNG_DESC mixes ascending (AN) and descending neurons; the DN population above separates them.",
+  "VIS_ME absorbs visual projection neurons with empty sub_class; VPN_LOOM_PROXY is carved out of it by neuropil group, not by cell type.",
+  "No VNC motor neurons exist in FAFB (brain only); leg/wing output is a modeled VNC adapter.",
+  "GUS_GRN_SWEET does not contain the sugar receptors: the build rule checks 'water' before defaulting to sweet, so sub_class 'sugar/water' GRNs land in GUS_GRN_WATER. GRN_SUGAR above is the sugar population used for taste."
+ ],
+ "calibration": [
+  {
+   "synapseWeight": 0.00006237006237006236,
+   "legacy": true,
+   "firedFraction": 0.009046856486302107,
+   "msPerTick": 1.0503979408740998,
+   "dnRate": 0,
+   "dnSd": 0,
+   "lhIdle": 0,
+   "odorLH_d": 0,
+   "loomDN_d": 0,
+   "loomLI": 0,
+   "sugarProb_d": 0
+  },
+  {
+   "synapseWeight": 0.0025,
+   "legacy": false,
+   "firedFraction": 0.00956730458511364,
+   "msPerTick": 0.9034664767980576,
+   "dnRate": 0.004136089644513135,
+   "dnSd": 0.004446365514683972,
+   "lhIdle": 0,
+   "odorLH_d": null,
+   "loomDN_d": 6.520196423020777,
+   "loomLI": 0.5347702919078712,
+   "sugarProb_d": null
+  },
+  {
+   "synapseWeight": 0.003,
+   "legacy": false,
+   "firedFraction": 0.010008437758069727,
+   "msPerTick": 1.0881458485126496,
+   "dnRate": 0.01090475567708953,
+   "dnSd": 0.0057849726580893775,
+   "lhIdle": 0,
+   "odorLH_d": null,
+   "loomDN_d": 5.2380599740815175,
+   "loomLI": 0.4627589092684298,
+   "sugarProb_d": null
+  },
+  {
+   "synapseWeight": 0.0035,
+   "legacy": false,
+   "firedFraction": 0.010699005421708378,
+   "msPerTick": 1.1972577208280564,
+   "dnRate": 0.018726685293068604,
+   "dnSd": 0.0074135360269487905,
+   "lhIdle": 0.0009211216939345059,
+   "odorLH_d": 43.97099300271109,
+   "loomDN_d": 4.059756860706365,
+   "loomLI": 0.3739997124922144,
+   "sugarProb_d": 1.0844892062570162
+  },
+  {
+   "synapseWeight": 0.004,
+   "legacy": false,
+   "firedFraction": 0.013346486661161179,
+   "msPerTick": 1.174358377456665,
+   "dnRate": 0.032795696112233985,
+   "dnSd": 0.00930151643524711,
+   "lhIdle": 0.06629999103873829,
+   "odorLH_d": 0.3548553184368096,
+   "loomDN_d": 3.61745334763244,
+   "loomLI": 0.19775891978058063,
+   "sugarProb_d": 3.2922195670124075
+  },
+  {
+   "synapseWeight": 0.0045,
+   "legacy": false,
+   "firedFraction": 0.014714085670173424,
+   "msPerTick": 1.3190768802165984,
+   "dnRate": 0.042841564617762465,
+   "dnSd": 0.010514095052239852,
+   "lhIdle": 0.07633474793250886,
+   "odorLH_d": 0.5153547303610326,
+   "loomDN_d": 3.5619332949831253,
+   "loomLI": 0.12215170331743794,
+   "sugarProb_d": 0.9838062412680361
+  },
+  {
+   "synapseWeight": 0.005,
+   "legacy": false,
+   "firedFraction": 0.01775110408961976,
+   "msPerTick": 1.3200060573220254,
+   "dnRate": 0.06709955415527288,
+   "dnSd": 0.012523931327983375,
+   "lhIdle": 0.09056865606677421,
+   "odorLH_d": 0.3818369439079454,
+   "loomDN_d": 1.0736283701879326,
+   "loomLI": 0.06863769161024193,
+   "sugarProb_d": 0.20871850749697488
+  }
+ ],
+ "evidence": [
+  {
+   "pathway": "Food odor -> projection neurons (ORN_FOOD -> ALPN)",
+   "metric": "effect size d",
+   "value": 67.64129865562488,
+   "status": "evidence",
+   "detail": "ALPN rate 0.04% -> 6.23%"
+  },
+  {
+   "pathway": "Food odor -> lateral horn (ORN_FOOD -> LH_NEURON)",
+   "metric": "effect size d",
+   "value": 43.97099300271109,
+   "status": "evidence",
+   "detail": "used as the connectome odor-salience readout; LH rate 0.09% -> 6.68%"
+  },
+  {
+   "pathway": "Food odor -> descending neurons (DN_ODOR_RANKED)",
+   "metric": "effect size d",
+   "value": 2.3053204923528354,
+   "status": "limitation",
+   "detail": "weak at the motor level; not used for steering"
+  },
+  {
+   "pathway": "Odor side (left-only vs right-only antenna) at the lateral horn",
+   "metric": "laterality difference",
+   "value": 0.027050865799151058,
+   "status": "limitation",
+   "detail": "bilateral receptor projections; left/right odor steering is therefore a labeled modeled circuit"
+  },
+  {
+   "pathway": "Odor side at descending neurons",
+   "metric": "laterality difference",
+   "value": 0.019750618694079534,
+   "status": "limitation",
+   "detail": ""
+  },
+  {
+   "pathway": "Sweet contact -> proboscis motor neurons (GRN_SUGAR -> MN_PROBOSCIS), per tick",
+   "metric": "effect size d",
+   "value": 1.0844892062570162,
+   "status": "limitation",
+   "detail": "MN_PROBOSCIS rate 0.12% -> 0.90%; only 24 neurons, so single ticks are noisy"
+  },
+  {
+   "pathway": "Sweet contact -> proboscis motor neurons, 1.5 s blocks (the feeding readout window)",
+   "metric": "effect size d",
+   "value": 5.092010548749034,
+   "status": "evidence",
+   "detail": "the adapter integrates MN_PROBOSCIS over ~1.5 s before feeding is permitted"
+  },
+  {
+   "pathway": "Web cue -> LC/LPLC-like proxy -> loom-ranked DNs",
+   "metric": "effect size d",
+   "value": 4.059756860706365,
+   "status": "evidence",
+   "detail": "proxy population selected by neuropil connectivity, not verified cell types (VIS_LC is empty)"
+  },
+  {
+   "pathway": "Web cue side (left vs right eye) at loom-ranked DNs",
+   "metric": "laterality difference",
+   "value": 0.7166448557746854,
+   "status": "evidence",
+   "detail": "ipsilateral bias; the motor adapter turns away from the stronger side (adapter assumption)"
+  },
+  {
+   "pathway": "Silk/touch -> touch-ranked DNs (MECH_TOUCH -> DN_TOUCH_RANKED)",
+   "metric": "effect size d",
+   "value": 13.311162882977026,
+   "status": "evidence",
+   "detail": ""
+  },
+  {
+   "pathway": "Touch side at touch-ranked DNs",
+   "metric": "laterality difference",
+   "value": 0.6015339290588296,
+   "status": "evidence",
+   "detail": ""
+  },
+  {
+   "pathway": "Wind -> Johnston's organ (JO_WIND)",
+   "metric": "effect size d",
+   "value": 3.169149184760048,
+   "status": "evidence",
+   "detail": "sensory population; bracing uses this plus gust strength"
+  },
+  {
+   "pathway": "Wind side at descending neurons",
+   "metric": "laterality difference",
+   "value": 0.036560576231895264,
+   "status": "limitation",
+   "detail": "upwind turning is a labeled modeled term"
+  },
+  {
+   "pathway": "Light -> descending-neuron activity (walking drive)",
+   "metric": "effect size d (dark vs light)",
+   "value": -1.3391667298077785,
+   "status": "evidence",
+   "detail": "DN rate 1.87% (light) vs 1.17% (dark)"
+  },
+  {
+   "pathway": "Nociception",
+   "metric": "-",
+   "value": null,
+   "status": "limitation",
+   "detail": "NOCI group is empty; repeated touch is encoded as strong bristle input"
+  }
+ ],
+ "readouts": {
+  "idle": {
+   "DN_L": {
+    "mean": 0.01823029366306027,
+    "sd": 0.007666365698507378
+   },
+   "DN_R": {
+    "mean": 0.019223076923076933,
+    "sd": 0.0071517738934116755
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.0046875,
+    "sd": 0.00869963181692191
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.002890625,
+    "sd": 0.006643381780717935
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.012605633802816889,
+    "sd": 0.013828482892182537
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.009406779661016938,
+    "sd": 0.01320484750770755
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.0005,
+    "sd": 0.002843120351538664
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.0012499999999999998,
+    "sd": 0.007107800878846659
+   },
+   "LH_NEURON_L": {
+    "mean": 0.000902527075812274,
+    "sd": 0.0020019018964637938
+   },
+   "LH_NEURON_R": {
+    "mean": 0.0009397163120567378,
+    "sd": 0.0022280540021704363
+   },
+   "ALPN_L": {
+    "mean": 0.00035190615835777115,
+    "sd": 0.0011189902655917255
+   },
+   "ALPN_R": {
+    "mean": 0.0004796511627906977,
+    "sd": 0.001447005893085485
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010256916996047426,
+    "sd": 0.039421002662948734
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244636,
+    "sd": 0.023480121476507885
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.1111250087618827
+  },
+  "odor": {
+   "DN_L": {
+    "mean": 0.021622874806800616,
+    "sd": 0.007817090510928715
+   },
+   "DN_R": {
+    "mean": 0.023015384615384618,
+    "sd": 0.008948028773697091
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.016015625,
+    "sd": 0.01707616640187062
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.016796875,
+    "sd": 0.015383881771496263
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.02091549295774646,
+    "sd": 0.017980653713221065
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.017372881355932176,
+    "sd": 0.01655798617167795
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.0018571428571428576,
+    "sd": 0.005589713584718242
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.0029166666666666672,
+    "sd": 0.0065484306856257125
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.0014583333333333332,
+    "sd": 0.007657489978953795
+   },
+   "LH_NEURON_L": {
+    "mean": 0.060144404332129975,
+    "sd": 0.03288061592125641
+   },
+   "LH_NEURON_R": {
+    "mean": 0.07340425531914892,
+    "sd": 0.048691442746653865
+   },
+   "ALPN_L": {
+    "mean": 0.0596480938416423,
+    "sd": 0.019899127287661692
+   },
+   "ALPN_R": {
+    "mean": 0.06491279069767443,
+    "sd": 0.023135791300541615
+   },
+   "ORN_FOOD_L": {
+    "mean": 0.06989583333333325,
+    "sd": 0.051826002975721035
+   },
+   "ORN_FOOD_R": {
+    "mean": 0.06973513513513513,
+    "sd": 0.047940795908545025
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0.000030750307503075034,
+    "sd": 0.0001340374828887046
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010256916996047426,
+    "sd": 0.039415057615851734
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244633,
+    "sd": 0.02279547787693246
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.21358895778656
+  },
+  "odorL": {
+   "DN_L": {
+    "mean": 0.021012364760432764,
+    "sd": 0.007308716014151717
+   },
+   "DN_R": {
+    "mean": 0.022176923076923077,
+    "sd": 0.008141176659208998
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.015859375,
+    "sd": 0.016047224923156498
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.016328125,
+    "sd": 0.015333014001147168
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.020281690140845052,
+    "sd": 0.01634288417392705
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.016525423728813535,
+    "sd": 0.01664450791644272
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.001785714285714286,
+    "sd": 0.005333280186810027
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.0030833333333333346,
+    "sd": 0.006471626105117974
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.0012499999999999998,
+    "sd": 0.007107800878846659
+   },
+   "LH_NEURON_L": {
+    "mean": 0.058411552346570465,
+    "sd": 0.03633993189606269
+   },
+   "LH_NEURON_R": {
+    "mean": 0.0623581560283688,
+    "sd": 0.04157002146104107
+   },
+   "ALPN_L": {
+    "mean": 0.05609970674486812,
+    "sd": 0.019147808590010095
+   },
+   "ALPN_R": {
+    "mean": 0.05748546511627908,
+    "sd": 0.019052205602804354
+   },
+   "ORN_FOOD_L": {
+    "mean": 0.07003837719298246,
+    "sd": 0.05435522103192937
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0.00002767527675276753,
+    "sd": 0.00012749331144912596
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010256916996047426,
+    "sd": 0.03942298414608722
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244634,
+    "sd": 0.023012617800190545
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.289407125711441
+  },
+  "odorR": {
+   "DN_L": {
+    "mean": 0.021429675425038642,
+    "sd": 0.008472169807923839
+   },
+   "DN_R": {
+    "mean": 0.02343846153846156,
+    "sd": 0.008136378241427359
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.015390625,
+    "sd": 0.016348671283452212
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.016484375,
+    "sd": 0.015003051447434787
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.01999999999999998,
+    "sd": 0.01709745454140113
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.017627118644067765,
+    "sd": 0.015611632460568809
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.0016428571428571432,
+    "sd": 0.004776109765258323
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.0027500000000000003,
+    "sd": 0.00662015021648972
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.0012499999999999998,
+    "sd": 0.007107800878846659
+   },
+   "LH_NEURON_L": {
+    "mean": 0.05743682310469324,
+    "sd": 0.04209329002464921
+   },
+   "LH_NEURON_R": {
+    "mean": 0.06473404255319146,
+    "sd": 0.034537619024928135
+   },
+   "ALPN_L": {
+    "mean": 0.05417888563049861,
+    "sd": 0.027990027150203024
+   },
+   "ALPN_R": {
+    "mean": 0.058168604651162775,
+    "sd": 0.021202983012833673
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0.06974054054054052,
+    "sd": 0.05087103848567146
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0.00002152521525215252,
+    "sd": 0.00011302568234618147
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010256916996047426,
+    "sd": 0.039419021080206666
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244632,
+    "sd": 0.02272668964503658
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.1980872574448584
+  },
+  "sugar": {
+   "DN_L": {
+    "mean": 0.018230293663060285,
+    "sd": 0.008225553924708244
+   },
+   "DN_R": {
+    "mean": 0.01934615384615385,
+    "sd": 0.00768990347043544
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.005390625,
+    "sd": 0.008920971933280309
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.003359375,
+    "sd": 0.007473504631989935
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.011760563380281681,
+    "sd": 0.013855712099569404
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.008983050847457616,
+    "sd": 0.012444649068325864
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.00021428571428571427,
+    "sd": 0.0017364636830204596
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.00016666666666666666,
+    "sd": 0.0016583123951777
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.008958333333333334,
+    "sd": 0.026639797661477168
+   },
+   "LH_NEURON_L": {
+    "mean": 0.000595667870036101,
+    "sd": 0.001645571952084093
+   },
+   "LH_NEURON_R": {
+    "mean": 0.0006028368794326243,
+    "sd": 0.001846356886091463
+   },
+   "ALPN_L": {
+    "mean": 0.0005278592375366567,
+    "sd": 0.0012005565683553504
+   },
+   "ALPN_R": {
+    "mean": 0.0005377906976744187,
+    "sd": 0.001512675732542374
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0.15813953488372107,
+    "sd": 0.34942585992545
+   },
+   "JO_WIND_L": {
+    "mean": 0.010237154150197625,
+    "sd": 0.03941722270764595
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244634,
+    "sd": 0.023468351165332184
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.186144178211689
+  },
+  "loomL": {
+   "DN_L": {
+    "mean": 0.029829984544049476,
+    "sd": 0.009133407544169516
+   },
+   "DN_R": {
+    "mean": 0.027838461538461538,
+    "sd": 0.009598566830892039
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.032265625,
+    "sd": 0.024807732342646216
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.01078125,
+    "sd": 0.014182646471568697
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.06845070422535215,
+    "sd": 0.039788171502964105
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.031186440677966044,
+    "sd": 0.02447025643833769
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.0012142857142857146,
+    "sd": 0.004689871848908418
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.0010833333333333333,
+    "sd": 0.005021481631727611
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.0016666666666666666,
+    "sd": 0.008164965809277261
+   },
+   "LH_NEURON_L": {
+    "mean": 0.015054151624548737,
+    "sd": 0.0322294124748939
+   },
+   "LH_NEURON_R": {
+    "mean": 0.012588652482269504,
+    "sd": 0.030386470817984026
+   },
+   "ALPN_L": {
+    "mean": 0.013724340175953071,
+    "sd": 0.023868806058318388
+   },
+   "ALPN_R": {
+    "mean": 0.011598837209302326,
+    "sd": 0.021856502455043753
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0.08060885608856083,
+    "sd": 0.12409741415525753
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0.000006968641114982578,
+    "sd": 0.00006933710363112335
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010256916996047426,
+    "sd": 0.039411093752902186
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244636,
+    "sd": 0.023056599297578854
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.2118581339716912
+  },
+  "loomR": {
+   "DN_L": {
+    "mean": 0.025865533230293676,
+    "sd": 0.0088686420635484
+   },
+   "DN_R": {
+    "mean": 0.03286153846153846,
+    "sd": 0.009178106184616454
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.009453125,
+    "sd": 0.012683949241437974
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.026953125,
+    "sd": 0.02203831336240083
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.03373239436619722,
+    "sd": 0.02335215939783624
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.0688983050847458,
+    "sd": 0.0477315791523485
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.0002857142857142857,
+    "sd": 0.002
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.0008333333333333333,
+    "sd": 0.0036324157862838947
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.002708333333333334,
+    "sd": 0.011084821328685858
+   },
+   "LH_NEURON_L": {
+    "mean": 0.000938628158844765,
+    "sd": 0.002203053617673987
+   },
+   "LH_NEURON_R": {
+    "mean": 0.001099290780141845,
+    "sd": 0.002049080881304066
+   },
+   "ALPN_L": {
+    "mean": 0.00036656891495601157,
+    "sd": 0.0010548016546875485
+   },
+   "ALPN_R": {
+    "mean": 0.000552325581395349,
+    "sd": 0.0014933487836094562
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0.08032752613240418,
+    "sd": 0.12020798282606496
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010237154150197625,
+    "sd": 0.03941325906244361
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244634,
+    "sd": 0.022690187919564668
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.2640787038207053
+  },
+  "touchL": {
+   "DN_L": {
+    "mean": 0.021213292117465227,
+    "sd": 0.009571386738201454
+   },
+   "DN_R": {
+    "mean": 0.02096923076923077,
+    "sd": 0.00831809889522652
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.014375,
+    "sd": 0.021444423080372203
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.006171875,
+    "sd": 0.00986944810307927
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.014225352112676044,
+    "sd": 0.01387091565581479
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.009152542372881343,
+    "sd": 0.012085114216932827
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.0239285714285714,
+    "sd": 0.04323494193452369
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.014416666666666657,
+    "sd": 0.02564054406599049
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.02145833333333333,
+    "sd": 0.0444834355874933
+   },
+   "LH_NEURON_L": {
+    "mean": 0.0007761732851985556,
+    "sd": 0.0018006263382208322
+   },
+   "LH_NEURON_R": {
+    "mean": 0.0008687943262411352,
+    "sd": 0.0021127581010188684
+   },
+   "ALPN_L": {
+    "mean": 0.0003079178885630498,
+    "sd": 0.001073389898427636
+   },
+   "ALPN_R": {
+    "mean": 0.00047965116279069764,
+    "sd": 0.0013873773022503111
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010256916996047426,
+    "sd": 0.039419021080206666
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244634,
+    "sd": 0.022835844749248446
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0.0828993055555555,
+    "sd": 0.20888771523741392
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.1621987631917
+  },
+  "touchR": {
+   "DN_L": {
+    "mean": 0.021877897990726435,
+    "sd": 0.008313372764624483
+   },
+   "DN_R": {
+    "mean": 0.023699999999999985,
+    "sd": 0.008766662916881518
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.01296875,
+    "sd": 0.014914305999190846
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.01390625,
+    "sd": 0.018605563474066028
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.017253521126760544,
+    "sd": 0.016511794489708933
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.013220338983050828,
+    "sd": 0.014397803784132437
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.0076428571428571335,
+    "sd": 0.013543392093111511
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.016,
+    "sd": 0.028569603116288166
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.008750000000000003,
+    "sd": 0.03162003144984028
+   },
+   "LH_NEURON_L": {
+    "mean": 0.023971119133574015,
+    "sd": 0.036957424730158006
+   },
+   "LH_NEURON_R": {
+    "mean": 0.021560283687943257,
+    "sd": 0.03078242956494874
+   },
+   "ALPN_L": {
+    "mean": 0.021935483870967727,
+    "sd": 0.026236027400053936
+   },
+   "ALPN_R": {
+    "mean": 0.020276162790697674,
+    "sd": 0.025590374844478313
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0.000006150061500615006,
+    "sd": 0.00006119233930545018
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.010256916996047426,
+    "sd": 0.03941703939784601
+   },
+   "JO_WIND_R": {
+    "mean": 0.0058154506437768224,
+    "sd": 0.023459941586740068
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0.0830350877192983,
+    "sd": 0.20557975276211835
+   },
+   "_msPerTick": 1.2575927218794822
+  },
+  "windL": {
+   "DN_L": {
+    "mean": 0.01952859350850078,
+    "sd": 0.007863080973610707
+   },
+   "DN_R": {
+    "mean": 0.02018461538461539,
+    "sd": 0.00807444650676018
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.00640625,
+    "sd": 0.009268931218727433
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.003359375,
+    "sd": 0.007308342167302719
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.014788732394366183,
+    "sd": 0.016530555766627444
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.00991525423728812,
+    "sd": 0.012371430144752352
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0.0005714285714285715,
+    "sd": 0.002799416848895061
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.0006666666666666666,
+    "sd": 0.0032659863237109042
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.0012499999999999998,
+    "sd": 0.007107800878846659
+   },
+   "LH_NEURON_L": {
+    "mean": 0.0010288808664259922,
+    "sd": 0.0021166905763968977
+   },
+   "LH_NEURON_R": {
+    "mean": 0.0010106382978723408,
+    "sd": 0.0021387859198632956
+   },
+   "ALPN_L": {
+    "mean": 0.00042521994134897344,
+    "sd": 0.0012231762602917383
+   },
+   "ALPN_R": {
+    "mean": 0.0005668604651162791,
+    "sd": 0.0015841689724120517
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.15444664031620567,
+    "sd": 0.2214969605769209
+   },
+   "JO_WIND_R": {
+    "mean": 0.007060085836909872,
+    "sd": 0.025822139062709613
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.0422602325677872
+  },
+  "windR": {
+   "DN_L": {
+    "mean": 0.019111282843894892,
+    "sd": 0.008366478202996698
+   },
+   "DN_R": {
+    "mean": 0.02125384615384615,
+    "sd": 0.00841817911694508
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.005390625,
+    "sd": 0.009452479316791705
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.003671875,
+    "sd": 0.007651066485097028
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.013098591549295761,
+    "sd": 0.014260172138608062
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.009999999999999983,
+    "sd": 0.012244516387225124
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0.00041666666666666664,
+    "sd": 0.002602082499332666
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.0014583333333333332,
+    "sd": 0.007657489978953795
+   },
+   "LH_NEURON_L": {
+    "mean": 0.0007220216606498192,
+    "sd": 0.0016144895144402814
+   },
+   "LH_NEURON_R": {
+    "mean": 0.0007269503546099293,
+    "sd": 0.0019194030171531006
+   },
+   "ALPN_L": {
+    "mean": 0.000249266862170088,
+    "sd": 0.001048258917989157
+   },
+   "ALPN_R": {
+    "mean": 0.0004069767441860464,
+    "sd": 0.0013647319295704073
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.006245059288537547,
+    "sd": 0.02621945033743318
+   },
+   "JO_WIND_R": {
+    "mean": 0.15390557939914162,
+    "sd": 0.27295463861910596
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.1964018687605857
+  },
+  "dark": {
+   "DN_L": {
+    "mean": 0.011174652241112828,
+    "sd": 0.007369928172941416
+   },
+   "DN_R": {
+    "mean": 0.01223846153846154,
+    "sd": 0.007769303122283046
+   },
+   "DN_ODOR_RANKED_L": {
+    "mean": 0.002421875,
+    "sd": 0.006460800520011046
+   },
+   "DN_ODOR_RANKED_R": {
+    "mean": 0.0015625,
+    "sd": 0.004941058844013093
+   },
+   "DN_LOOM_RANKED_L": {
+    "mean": 0.006971830985915487,
+    "sd": 0.011267385561231113
+   },
+   "DN_LOOM_RANKED_R": {
+    "mean": 0.005423728813559317,
+    "sd": 0.009551866307529066
+   },
+   "DN_TOUCH_RANKED_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "DN_TOUCH_RANKED_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MN_PROBOSCIS": {
+    "mean": 0.000625,
+    "sd": 0.005064685742143007
+   },
+   "LH_NEURON_L": {
+    "mean": 0.00005415162454873647,
+    "sd": 0.000438817537225387
+   },
+   "LH_NEURON_R": {
+    "mean": 0.00010638297872340424,
+    "sd": 0.0006049192237316304
+   },
+   "ALPN_L": {
+    "mean": 0.00005865102639296188,
+    "sd": 0.00041055718475073314
+   },
+   "ALPN_R": {
+    "mean": 0.00010174418604651163,
+    "sd": 0.0006741115479828621
+   },
+   "ORN_FOOD_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "ORN_FOOD_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "VPN_LOOM_PROXY_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "GRN_SUGAR": {
+    "mean": 0,
+    "sd": 0
+   },
+   "JO_WIND_L": {
+    "mean": 0.01027667984189723,
+    "sd": 0.03941486438677601
+   },
+   "JO_WIND_R": {
+    "mean": 0.005836909871244633,
+    "sd": 0.023472275258200996
+   },
+   "MECH_TOUCH_L": {
+    "mean": 0,
+    "sd": 0
+   },
+   "MECH_TOUCH_R": {
+    "mean": 0,
+    "sd": 0
+   },
+   "_msPerTick": 1.00959769487381
+  }
+ },
+ "configuredWeight": 0.0035
+}

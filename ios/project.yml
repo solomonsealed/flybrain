@@ -45,10 +45,14 @@ targets:
           mkdir -p "${DEST}/svg"
           rsync -a --delete "${WEB_ROOT}/svg/" "${DEST}/svg/"
 
-          # Copy data/ (only connectome.bin.gz and neuron_meta.json -- exclude large CSVs)
+          # Copy data/ (connectome binary, group metadata and the paired neuron
+          # sidecar -- exclude large CSVs). The sidecar must match the binary;
+          # regenerate both with scripts/ if either changes.
           mkdir -p "${DEST}/data"
           cp "${WEB_ROOT}/data/connectome.bin.gz" "${DEST}/data/connectome.bin.gz"
           cp "${WEB_ROOT}/data/neuron_meta.json" "${DEST}/data/neuron_meta.json"
+          cp "${WEB_ROOT}/data/neuron_sidecar.bin.gz" "${DEST}/data/neuron_sidecar.bin.gz"
+          cp "${WEB_ROOT}/data/neuron_sidecar.json" "${DEST}/data/neuron_sidecar.json"
 
           echo "Web assets copied to ${DEST}"
         basedOnDependencyAnalysis: false

@@ -1,6 +1,43 @@
 # FlyBrain - Interactive Virtual Drosophila
 
-A browser-based virtual fruit fly driven by a simplified connectome. Users interact with the fly (feed, touch, blow air, change light) and it responds with biologically-plausible behaviors.
+A browser-based virtual fruit fly driven by the FlyWire connectome, living in a small 3D garden. Users interact with the fly and its habitat (drop fruit, hang or remove spiderwebs, touch, blow air, change light and temperature), and it responds through local senses, neural activity and a documented motor adapter.
+
+> **Current implementation (garden, FLY-WORLD-PLAN).** The sections from "Core Concept" down describe the original v0.1 canvas app and are kept for history. The implemented behavior is summarized in "Garden (current)" below and specified in detail in [docs/world-model.md](docs/world-model.md).
+
+## Garden (current)
+
+- **World.** A 120 × 90 body-length walled orchard (Three.js r128, with a Canvas 2D fallback):
+  - three fruit trees and seeded, capped fruit replenishment
+  - two orb webs with snag-and-release contact
+  - a trellis, stones and a leaf shelter
+  - a soft breeze and local shade
+- **Coordinates.** Units are body lengths and seconds (coordinate version `world-bl-v1`). The camera never moves anything in the world.
+- **Senses → brain.** Odor at two antennae (wind-stretched field), taste only on contact, a visual web cue per eye (size, expansion, contrast, line of sight), touch, wind and light. These stimulate hemisphere-specific neuron populations from a versioned sidecar.
+- **Brain → body.**
+  - The worker is stepped once per 100 ms with step IDs, and one step at most is outstanding.
+  - Descending-neuron, lateral-horn and proboscis-motor-neuron readouts drive a modeled VNC adapter. Every term is labeled connectome-driven or modeled.
+  - Body physics runs at a fixed 60 Hz with swept collisions.
+- **Behavior.** FlyPolicy states:
+
+  | State | Enters when |
+  |---|---|
+  | idle | walking drive is low |
+  | walk | walking drive is up (odor keeps it walking) |
+  | feed | proboscis output is high **and** the head touches edible fruit |
+  | groom | grooming urge is high |
+  | rest | fatigue is high |
+  | startle | escape output is urgent |
+  | fly | takeoff output |
+  | brace | a gust hits the antennae |
+  | snagged | the fly touches silk |
+
+  Only consumed nutrition reduces hunger. Urgent defense interrupts feeding and rest.
+- **Modes.**
+  - *Connectome + modeled steering* (default): adds a labeled bilateral odor comparison and odor-gated upwind turning.
+  - *Connectome readout only*: those two terms are off.
+  - *Fallback*: the 59-group approximation, used only if the connectome fails.
+- **Tools.** Observe, Fruit, Web, Touch, Air, Light, Temp, Follow, Pause, Reset, and an Inspect panel (trace, events, experiments, inspection), plus Scent, Danger, Trail and Neural overlays. Runs are seeded and replayable from logs; the caretaker uses the same command API in world coordinates.
+- **Evidence.** [docs/connectome-baseline.md](docs/connectome-baseline.md) and [docs/world-experiments.md](docs/world-experiments.md).
 
 ## Origin
 Forked from [heyseth/worm-sim](https://github.com/heyseth/worm-sim). Same concept (connectome-driven creature in the browser), different organism.
@@ -122,7 +159,7 @@ Each behavior is a state with entry conditions, animations, and exit conditions:
 
 ## Stretch Goals (not in v0.1)
 - Multiple flies with social behavior
-- Learning: fly remembers where food was
+- Learning: fly remembers where food was (still future work: the garden has fixed weights and makes no memory claims)
 - Sound: wing buzz, feeding sounds
 - Mobile touch support
 - Connectome editor: adjust weights in real-time

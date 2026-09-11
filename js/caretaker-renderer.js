@@ -1,10 +1,12 @@
 (function() {
+  // Draws Claude's caretaker presence over the garden. Attention and effects
+  // are stored in world coordinates (BL) and projected through the current
+  // camera every frame, so they stay attached to the garden while the view
+  // pans, zooms or follows the fly.
   var cursorImg = null;
   var cursorLoaded = false;
-  var attentionX = -1;
-  var attentionY = -1;
-  var attentionTargetX = -1;
-  var attentionTargetY = -1;
+  var attention = null;        // {x, z} world, eased toward attentionTarget
+  var attentionTarget = null;
   var trail = [];
   var TRAIL_MAX = 40;
   var TRAIL_LIFETIME = 2000;
@@ -17,7 +19,6 @@
 
   var CURSOR_SIZE = 20;
   var CLAUDE_ORANGE = 'rgba(227, 115, 75, ';
-  var CLAUDE_ORANGE_HEX = '#E3734B';
 
   function init() {
     cursorImg = new Image();
@@ -28,70 +29,59 @@
     };
   }
 
-  function onCommand(action, params) {
+  function flyPoint() {
+    var st = window.FlyWorldApp ? window.FlyWorldApp.getState() : null;
+    return st ? { x: st.fly.x, z: st.fly.z } : { x: 0, z: 0 };
+  }
+
+  // Screen position (overlay-canvas CSS px) of a world point.
+  function project(p) {
+    var a = window.FlyWorldApp;
+    if (!a || !a.renderer) return null;
+    var s = a.worldToScreen(p.x, 0.3, p.z);
+    var c = document.getElementById('canvas');
+    var r = c ? c.getBoundingClientRect() : { left: 0, top: 0 };
+    return { x: s.x - r.left, y: s.y - r.top };
+  }
+
+  // `at` is the resolved world point of the command, if any.
+  function onCommand(action, params, at) {
     lastCommandTime = Date.now();
-    var tx, ty;
+    var target = at || flyPoint();
     switch (action) {
       case 'place_food':
-        attentionTargetX = params.x;
-        attentionTargetY = params.y;
-        activeEffects.push({ type: 'ripple', x: params.x, y: params.y, startTime: Date.now() });
-        highlightToolbar('feed');
+        activeEffects.push({ type: 'ripple', p: target, startTime: Date.now() });
+        highlightToolbar('fruit');
         break;
       case 'touch':
-        tx = params.x !== undefined ? params.x : fly.x;
-        ty = params.y !== undefined ? params.y : fly.y;
-        attentionTargetX = tx;
-        attentionTargetY = ty;
-        activeEffects.push({ type: 'ring', x: tx, y: ty, startTime: Date.now() });
+        activeEffects.push({ type: 'ring', p: target, startTime: Date.now() });
         highlightToolbar('touch');
         break;
       case 'blow_wind':
-        attentionTargetX = fly.x;
-        attentionTargetY = fly.y;
-        activeEffects.push({ type: 'arrow', x: fly.x, y: fly.y, startTime: Date.now(), params: { strength: params.strength || 0.5, direction: params.direction || 0 } });
+        activeEffects.push({ type: 'arrow', p: target, startTime: Date.now(), params: { strength: params.strength || 0.5, direction: params.direction || 0 } });
         highlightToolbar('air');
         break;
       case 'set_light':
         highlightToolbar('light');
-        attentionTargetX = fly.x;
-        attentionTargetY = fly.y;
         break;
       case 'set_temp':
         highlightToolbar('temp');
-        attentionTargetX = fly.x;
-        attentionTargetY = fly.y;
         break;
       case 'clear_food':
-        highlightToolbar('feed');
-        attentionTargetX = fly.x;
-        attentionTargetY = fly.y;
-        break;
-      default:
-        attentionTargetX = fly.x;
-        attentionTargetY = fly.y;
+        highlightToolbar('fruit');
         break;
     }
-    if (attentionX < 0) {
-      attentionX = attentionTargetX;
-      attentionY = attentionTargetY;
-    }
+    attentionTarget = { x: target.x, z: target.z };
+    if (!attention) attention = { x: target.x, z: target.z };
   }
 
   function setConnected(isConnected) {
     caretakerConnected = isConnected;
     if (isConnected) {
       if (idleStart === 0) idleStart = Date.now();
-      // Default attention to fly position so cursor is visible immediately
-      if (attentionX < 0 && typeof fly !== 'undefined') {
-        attentionX = fly.x;
-        attentionY = fly.y;
-        attentionTargetX = fly.x;
-        attentionTargetY = fly.y;
-      }
+      if (!attention) { attention = flyPoint(); attentionTarget = flyPoint(); }
     } else {
-      attentionX = -1;
-      attentionY = -1;
+      attention = null;
       trail = [];
       activeEffects = [];
     }
@@ -109,22 +99,16 @@
     // Only show cursor when Claude recently acted (within 3s of a command)
     var idleTime = Date.now() - lastCommandTime;
     if (lastCommandTime === 0 || idleTime > 3000) {
-      // Fade out: clear attention so cursor/trail stop drawing
-      attentionX = -1;
-      attentionY = -1;
+      attention = null;
       trail = [];
       return;
     }
-    if (attentionX < 0) return;
+    if (!attention || !attentionTarget) return;
     var lerpSpeed = 0.08;
-    attentionX += (attentionTargetX - attentionX) * lerpSpeed;
-    attentionY += (attentionTargetY - attentionY) * lerpSpeed;
-    if (Math.abs(attentionX - attentionTargetX) < 0.5 && Math.abs(attentionY - attentionTargetY) < 0.5) {
-      attentionX = attentionTargetX;
-      attentionY = attentionTargetY;
-    }
-    if (trail.length === 0 || Math.hypot(attentionX - trail[trail.length - 1].x, attentionY - trail[trail.length - 1].y) > 3) {
-      trail.push({ x: attentionX, y: attentionY, time: Date.now() });
+    attention.x += (attentionTarget.x - attention.x) * lerpSpeed;
+    attention.z += (attentionTarget.z - attention.z) * lerpSpeed;
+    if (trail.length === 0 || Math.hypot(attention.x - trail[trail.length - 1].x, attention.z - trail[trail.length - 1].z) > 0.3) {
+      trail.push({ x: attention.x, z: attention.z, time: Date.now() });
     }
     while (trail.length > 0 && Date.now() - trail[0].time > TRAIL_LIFETIME) trail.shift();
     while (trail.length > TRAIL_MAX) trail.shift();
@@ -140,7 +124,7 @@
   function drawOverlay(ctx) {
     if (!caretakerConnected) return;
     drawEffects(ctx);
-    if (attentionX >= 0) {
+    if (attention) {
       drawTrail(ctx);
       drawCursor(ctx);
     }
@@ -149,14 +133,16 @@
   function drawTrail(ctx) {
     if (trail.length < 2) return;
     var now = Date.now();
-    var i, age, alpha;
+    var i, age, alpha, a, b;
     for (i = 1; i < trail.length; i++) {
       age = now - trail[i].time;
       alpha = (1 - age / TRAIL_LIFETIME) * 0.25;
       if (alpha <= 0) continue;
+      a = project(trail[i - 1]); b = project(trail[i]);
+      if (!a || !b) continue;
       ctx.beginPath();
-      ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
-      ctx.lineTo(trail[i].x, trail[i].y);
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
       ctx.strokeStyle = CLAUDE_ORANGE + alpha.toFixed(3) + ')';
       ctx.lineWidth = 1.5;
       ctx.stroke();
@@ -164,17 +150,18 @@
   }
 
   function drawCursor(ctx) {
-    if (attentionX < 0) return;
+    var p = attention ? project(attention) : null;
+    if (!p) return;
     if (cursorLoaded) {
       ctx.globalAlpha = 0.85;
-      ctx.drawImage(cursorImg, attentionX - CURSOR_SIZE / 2, attentionY - CURSOR_SIZE / 2, CURSOR_SIZE, CURSOR_SIZE);
+      ctx.drawImage(cursorImg, p.x - CURSOR_SIZE / 2, p.y - CURSOR_SIZE / 2, CURSOR_SIZE, CURSOR_SIZE);
       ctx.globalAlpha = 1.0;
     } else {
       ctx.beginPath();
-      ctx.moveTo(attentionX, attentionY - 8);
-      ctx.lineTo(attentionX + 6, attentionY);
-      ctx.lineTo(attentionX, attentionY + 8);
-      ctx.lineTo(attentionX - 6, attentionY);
+      ctx.moveTo(p.x, p.y - 8);
+      ctx.lineTo(p.x + 6, p.y);
+      ctx.lineTo(p.x, p.y + 8);
+      ctx.lineTo(p.x - 6, p.y);
       ctx.closePath();
       ctx.fillStyle = CLAUDE_ORANGE + '0.85)';
       ctx.fill();
@@ -183,9 +170,11 @@
 
   function drawEffects(ctx) {
     var now = Date.now();
-    var i, e, elapsed, p, p1, r1, a1, p2, r2, a2, r, a, angle, len, ex, ey, headLen;
+    var i, e, q, elapsed, p, p1, r1, a1, p2, r2, a2, r, a, angle, len, ex, ey, headLen;
     for (i = 0; i < activeEffects.length; i++) {
       e = activeEffects[i];
+      q = project(e.p);
+      if (!q) continue;
       elapsed = now - e.startTime;
       if (e.type === 'ripple') {
         p1 = elapsed / 800;
@@ -193,7 +182,7 @@
         a1 = (1 - p1) * 0.6;
         if (p1 <= 1) {
           ctx.beginPath();
-          ctx.arc(e.x, e.y, r1, 0, Math.PI * 2);
+          ctx.arc(q.x, q.y, r1, 0, Math.PI * 2);
           ctx.strokeStyle = CLAUDE_ORANGE + a1.toFixed(3) + ')';
           ctx.lineWidth = 2 * (1 - p1);
           ctx.stroke();
@@ -203,7 +192,7 @@
         a2 = (1 - p2) * 0.4;
         if (p2 > 0 && p2 <= 1) {
           ctx.beginPath();
-          ctx.arc(e.x, e.y, r2, 0, Math.PI * 2);
+          ctx.arc(q.x, q.y, r2, 0, Math.PI * 2);
           ctx.strokeStyle = CLAUDE_ORANGE + a2.toFixed(3) + ')';
           ctx.lineWidth = 2 * (1 - p2);
           ctx.stroke();
@@ -213,63 +202,41 @@
         r = 8 + p * 20;
         a = (1 - p) * 0.7;
         ctx.beginPath();
-        ctx.arc(e.x, e.y, r, 0, Math.PI * 2);
+        ctx.arc(q.x, q.y, r, 0, Math.PI * 2);
         ctx.strokeStyle = CLAUDE_ORANGE + a.toFixed(3) + ')';
         ctx.lineWidth = 2.5 * (1 - p);
         ctx.stroke();
         ctx.beginPath();
-        ctx.arc(e.x, e.y, 6 * (1 - p), 0, Math.PI * 2);
+        ctx.arc(q.x, q.y, 6 * (1 - p), 0, Math.PI * 2);
         ctx.fillStyle = CLAUDE_ORANGE + (a * 0.3).toFixed(3) + ')';
         ctx.fill();
       } else if (e.type === 'arrow') {
+        // direction degrees in the world frame (0 = east, 90 = south),
+        // drawn by projecting a world-space arrow
         p = elapsed / 1200;
         angle = e.params.direction * Math.PI / 180;
-        len = 40 * e.params.strength;
-        ex = e.x + Math.cos(angle) * len;
-        ey = e.y + Math.sin(angle) * len;
+        len = 6 * e.params.strength;
+        var tip = project({ x: e.p.x + Math.cos(angle) * len, z: e.p.z + Math.sin(angle) * len });
+        if (!tip) continue;
+        ex = tip.x; ey = tip.y;
         a = (1 - p) * 0.6;
         ctx.beginPath();
-        ctx.moveTo(e.x, e.y);
+        ctx.moveTo(q.x, q.y);
         ctx.lineTo(ex, ey);
         ctx.strokeStyle = CLAUDE_ORANGE + a.toFixed(3) + ')';
         ctx.lineWidth = 2.5;
         ctx.stroke();
+        var sa = Math.atan2(ey - q.y, ex - q.x);
         headLen = 8;
         ctx.beginPath();
         ctx.moveTo(ex, ey);
-        ctx.lineTo(ex - Math.cos(angle - 0.4) * headLen, ey - Math.sin(angle - 0.4) * headLen);
+        ctx.lineTo(ex - Math.cos(sa - 0.4) * headLen, ey - Math.sin(sa - 0.4) * headLen);
         ctx.moveTo(ex, ey);
-        ctx.lineTo(ex - Math.cos(angle + 0.4) * headLen, ey - Math.sin(angle + 0.4) * headLen);
+        ctx.lineTo(ex - Math.cos(sa + 0.4) * headLen, ey - Math.sin(sa + 0.4) * headLen);
         ctx.strokeStyle = CLAUDE_ORANGE + a.toFixed(3) + ')';
         ctx.lineWidth = 2.5;
         ctx.stroke();
       }
-    }
-  }
-
-  function drawIdlePulse(ctx) {
-    if (attentionX < 0) return;
-    var timeSinceCommand = Date.now() - lastCommandTime;
-    if (timeSinceCommand < 3000) return;
-    var t = (Date.now() % 1500) / 1500;
-    var beat = 0;
-    if (t < 0.15) {
-      beat = Math.sin(t / 0.15 * Math.PI);
-    } else if (t < 0.3) {
-      beat = 0;
-    } else if (t < 0.45) {
-      beat = Math.sin((t - 0.3) / 0.15 * Math.PI) * 0.6;
-    } else {
-      beat = 0;
-    }
-    if (beat > 0) {
-      var pulseRadius = CURSOR_SIZE / 2 + 4 + beat * 6;
-      var pulseAlpha = beat * 0.25;
-      ctx.beginPath();
-      ctx.arc(attentionX, attentionY, pulseRadius, 0, Math.PI * 2);
-      ctx.strokeStyle = CLAUDE_ORANGE + pulseAlpha.toFixed(3) + ')';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
     }
   }
 

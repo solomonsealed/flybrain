@@ -27,12 +27,19 @@ BRAIN._testMode = true;
 // Stub window for neuro-renderer.js IIFE (assigns to window.NeuroRenderer)
 if (typeof window === 'undefined') global.window = global;
 
-// Phase 3: Load bridge, logic, and tests
+// Phase 3: Load world modules, bridge, logic, and tests
+var W = require('./load-world');
+W.loadWorld();
+// World integration tests drive the real sim-worker.js through this harness.
+global.WorldTestHarness = W;
+W.fs = fs;
+W.path = path;
+
 var moreFiles = [
 	'js/brain-worker-bridge.js',
-	'js/fly-logic.js',
 	'js/neuro-renderer.js',
 	'tests/tests.js',
+	'tests/world-tests.js',
 ];
 for (var i = 0; i < moreFiles.length; i++) {
 	var filePath = path.join(root, moreFiles[i]);
