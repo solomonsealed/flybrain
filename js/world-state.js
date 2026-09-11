@@ -8,6 +8,16 @@
  * Randomness: `state.rng` drives everything that affects the simulation.
  * Cosmetic randomness (leaf placement, strand wobble) must use a separate
  * generator created from `state.cosmeticSeed`, so drawing never perturbs a run.
+ *
+ * Flies: `state.flies` holds every adult (one record per fly: body, drives,
+ * behavior, latched contacts, intake, sense memory, reproductive state) and
+ * `state.brood` the eggs, larvae and pupae. The body, senses and policy
+ * modules are written for one fly and read state.fly, state.drives,
+ * state.behavior, state.pending, state.intake, state.senseMemory and
+ * state.repro; focus() points those names at one adult's record (and
+ * state.current at the record itself). They are non-enumerable, so a
+ * serialized state stores each fly once, and deserialize() re-focuses the
+ * first adult.
  */
 (function (root) {
 	'use strict';
@@ -131,16 +141,113 @@
 		return Math.hypot(px - (ax + t * vx), pz - (az + t * vz));
 	}
 
+	/* ---------- flies ---------- */
+
+	var FLY_FIELDS = ['fly', 'drives', 'behavior', 'pending', 'intake', 'senseMemory', 'repro'];
+
+	// Points the per-fly names (state.fly, state.drives, ...) at one adult's
+	// record; returns the previously focused record.
+	function focus(state, rec) {
+		var prev = state.current || null;
+		for (var i = 0; i < FLY_FIELDS.length; i++) {
+			Object.defineProperty(state, FLY_FIELDS[i], { value: rec ? rec[FLY_FIELDS[i]] : null, writable: true, configurable: true, enumerable: false });
+		}
+		Object.defineProperty(state, 'current', { value: rec || null, writable: true, configurable: true, enumerable: false });
+		return prev;
+	}
+
+	// Runs fn(rec, i) with each adult focused in turn, then restores the focus.
+	function eachFly(state, fn) {
+		var prev = state.current;
+		for (var i = 0; i < state.flies.length; i++) {
+			focus(state, state.flies[i]);
+			fn(state.flies[i], i);
+		}
+		focus(state, prev && state.flies.indexOf(prev) !== -1 ? prev : state.flies[0]);
+	}
+
+	function findFly(state, id) {
+		for (var i = 0; i < state.flies.length; i++) if (state.flies[i].id === id) return state.flies[i];
+		return null;
+	}
+
+	// One adult. spec: {sex, x, z, heading, drives?, born?, parents?, id?}.
+	// Founders have born = null: they arrive as mature adults.
+	function newFly(state, cfg, spec) {
+		var drives = {};
+		for (var k in cfg.initialDrives) drives[k] = spec.drives && spec.drives[k] !== undefined ? spec.drives[k] : cfg.initialDrives[k];
+		return {
+			id: spec.id || ('fly-' + (state.nextFlyId++)),
+			sex: spec.sex === 'male' ? 'male' : 'female',
+			born: spec.born === undefined ? null : spec.born,
+			parents: spec.parents || null,
+			fly: {
+				x: spec.x, y: 0, z: spec.z,
+				heading: spec.heading || 0,
+				speed: 0, yawRate: 0, vy: 0,
+				mode: 'ground',
+				airTime: 0,
+				snag: null,
+				lastWallContact: -1
+			},
+			drives: drives,
+			behavior: {
+				current: 'idle',
+				enterTime: state.time,
+				cooldowns: {},
+				phase: 'none',
+				phaseTime: state.time,
+				groomLocation: null,
+				escapeSign: 0,
+				flightEnd: 0
+			},
+			// Contact pulses latched by physics/commands until the next neural
+			// step encodes them, so short contacts survive worker scheduling.
+			pending: { touchL: 0, touchR: 0, silkL: 0, silkR: 0, touchLocation: null, nociception: false },
+			intake: { total: 0, nutrition: 0, lastFruitId: null },
+			senseMemory: { odor: [], webs: {}, lastTime: -1 },
+			// Reproductive state (world-life.js). matings counts copulations;
+			// eggs are carried until laid; a mated female is not receptive
+			// before receptiveFrom.
+			repro: { matings: 0, receptiveFrom: 0, eggs: 0, laid: 0, sire: null, partner: null, copulaUntil: -1,
+				courtTarget: null, courtStart: -1, courtSeen: -1, singing: false, layBlocked: false }
+		};
+	}
+
+	// Founding adults: 'pair' (cfg.population.founders), a number N
+	// (alternating female/male scattered by a generator of their own, so the
+	// garden's random sequence is unchanged), an explicit list, or by default
+	// a single female at options.start (the documented experiments).
+	function founderSpecs(cfg, seed, options) {
+		var f = options.founders;
+		if (Array.isArray(f)) return f;
+		if (f === 'pair') return cfg.population.founders;
+		if (typeof f === 'number' && f > 1) {
+			var n = Math.min(Math.floor(f), cfg.population.max), sc = cfg.population.scatter;
+			var rng = createRng((seed ^ 0x51f15eed) >>> 0), out = [];
+			for (var i = 0; i < n; i++) {
+				var p = null;
+				for (var tries = 0; tries < 30 && !p; tries++) {
+					var a = rngRange(rng, 0, Math.PI * 2), r = sc.radius * Math.sqrt(rngNext(rng));
+					var x = sc.x + Math.cos(a) * r, z = sc.z + Math.sin(a) * r;
+					if (insideEnclosure(cfg, x, z, 2) && groundPointFree(cfg, x, z, 1.2)) p = { x: x, z: z };
+				}
+				p = p || { x: sc.x, z: sc.z };
+				out.push({ sex: i % 2 ? 'male' : 'female', x: p.x, z: p.z, heading: rngRange(rng, -Math.PI, Math.PI) });
+			}
+			return out;
+		}
+		var start = options.start || cfg.fly.start;
+		return [{ sex: 'female', x: start.x, z: start.z, heading: start.heading }];
+	}
+
 	/* ---------- state creation ---------- */
 
 	function create(cfg, seed, options) {
 		options = options || {};
 		seed = (seed === undefined ? 1 : seed) >>> 0;
-		var drives = {};
 		var initDrives = options.drives || cfg.initialDrives;
-		for (var k in cfg.initialDrives) drives[k] = initDrives[k] !== undefined ? initDrives[k] : cfg.initialDrives[k];
 
-		var start = options.start || cfg.fly.start;
 		var state = {
 			configVersion: cfg.version,
 			coordinateVersion: cfg.coordinateVersion,
@@ -151,15 +258,9 @@
 			bodyStep: 0,
 			neuralStep: 0,
 			nextId: 1,
-			fly: {
-				x: start.x, y: 0, z: start.z,
-				heading: start.heading,
-				speed: 0, yawRate: 0, vy: 0,
-				mode: 'ground',
-				airTime: 0,
-				snag: null,
-				lastWallContact: -1
-			},
+			nextFlyId: 1,
+			flies: [],
+			brood: [],
 			fruits: [],
 			webs: [],
 			env: {
@@ -168,25 +269,17 @@
 				breeze: normalizedBreeze(cfg.breeze),
 				gust: null
 			},
-			drives: drives,
-			behavior: {
-				current: 'idle',
-				enterTime: 0,
-				cooldowns: {},
-				phase: 'none',
-				phaseTime: 0,
-				groomLocation: null,
-				escapeSign: 0,
-				flightEnd: 0
-			},
-			// Contact pulses latched by physics/commands until the next neural
-			// step encodes them, so short contacts survive worker scheduling.
-			pending: { touchL: 0, touchR: 0, silkL: 0, silkR: 0, touchLocation: null, nociception: false },
-			intake: { total: 0, nutrition: 0, lastFruitId: null },
 			events: [],
 			eventSeq: 0,
 			silenced: { foodInput: false, threatInput: false, motorOutput: false }
 		};
+		founderSpecs(cfg, seed, options).forEach(function (spec) {
+			var s = {};
+			for (var k in spec) s[k] = spec[k];
+			s.drives = initDrives;
+			state.flies.push(newFly(state, cfg, s));
+		});
+		focus(state, state.flies[0]);
 
 		if (options.webs !== false) {
 			for (var w = 0; w < cfg.webs.length; w++) {
@@ -432,8 +525,9 @@
 			if (!isFinite(p.x) || !isFinite(p.z)) return fail('placeWeb needs numeric x and z');
 			if (state.webs.length >= 4) return fail('web limit reached');
 			var wc = clampToEnclosure(cfg, p.x, p.z, 5);
-			var fly = state.fly;
-			if (Math.hypot(wc.x - fly.x, wc.z - fly.z) < 5) return fail('too close to the fly');
+			var fly = nearestFly(state, wc.x, wc.z).fly;
+			if (Math.hypot(wc.x - fly.x, wc.z - fly.z) < 5) return fail(state.flies.length > 1 ? 'too close to a fly' : 'too close to the fly');
+			// faces the nearest fly unless a heading is given
 			var h = isFinite(p.heading) ? p.heading : Math.atan2(-(fly.z - wc.z), fly.x - wc.x);
 			var web = addWeb(state, cfg, {
 				label: 'Placed web', x: wc.x, y: 3.0, z: wc.z,
@@ -446,7 +540,7 @@
 		case 'removeWeb': {
 			var wi = indexById(state.webs, p.id);
 			if (wi < 0) return fail('no such web');
-			if (state.fly.snag && state.fly.snag.webId === p.id) state.fly.snag = null;
+			state.flies.forEach(function (r) { if (r.fly.snag && r.fly.snag.webId === p.id) r.fly.snag = null; });
 			state.webs.splice(wi, 1);
 			logEvent(state, 'web-removed', { id: p.id }, source);
 			return { ok: true };
@@ -484,27 +578,33 @@
 			return { ok: true };
 		}
 		case 'touch': {
-			// location: head | thorax | abdomen | leg; side: 'left' | 'right' | 'both'
+			// fly: target id (default: the first adult); location: head |
+			// thorax | abdomen | leg; side: 'left' | 'right' | 'both'
+			var tr = targetFly(state, p.fly);
+			if (!tr) return fail('no such fly');
+			var pend = tr.pending;
 			var loc = p.location || 'thorax';
 			var side = p.side || 'both';
 			var amt = 1;
 			// onset pulse plus a short sustained touch (legacy tool held ~2 s)
-			if (side !== 'right') { state.pending.touchL = Math.max(state.pending.touchL, amt); state.pending.touchUntilL = state.time + 1.0; }
-			if (side !== 'left') { state.pending.touchR = Math.max(state.pending.touchR, amt); state.pending.touchUntilR = state.time + 1.0; }
-			state.pending.touchLocation = loc;
-			state.pending.lastTouchLocation = loc;
-			var recent = state.pending.touchTimes || [];
+			if (side !== 'right') { pend.touchL = Math.max(pend.touchL, amt); pend.touchUntilL = state.time + 1.0; }
+			if (side !== 'left') { pend.touchR = Math.max(pend.touchR, amt); pend.touchUntilR = state.time + 1.0; }
+			pend.touchLocation = loc;
+			pend.lastTouchLocation = loc;
+			var recent = pend.touchTimes || [];
 			recent = recent.filter(function (t) { return state.time - t < 4; });
 			recent.push(state.time);
-			if (recent.length >= 3) { state.pending.nociception = true; recent = []; }
-			state.pending.touchTimes = recent;
-			logEvent(state, 'touch', { location: loc, side: side }, source);
+			if (recent.length >= 3) { pend.nociception = true; recent = []; }
+			pend.touchTimes = recent;
+			logEvent(state, 'touch', { location: loc, side: side, fly: tr.id }, source);
 			return { ok: true };
 		}
 		case 'setDrive': {
-			if (!(p.name in state.drives)) return fail('unknown drive');
-			state.drives[p.name] = Math.max(0, Math.min(1, Number(p.value) || 0));
-			logEvent(state, 'drive-set', { name: p.name, value: state.drives[p.name] }, source);
+			var dr = targetFly(state, p.fly);
+			if (!dr) return fail('no such fly');
+			if (!(p.name in dr.drives)) return fail('unknown drive');
+			dr.drives[p.name] = Math.max(0, Math.min(1, Number(p.value) || 0));
+			logEvent(state, 'drive-set', { name: p.name, value: dr.drives[p.name], fly: dr.id }, source);
 			return { ok: true };
 		}
 		case 'silence': {
@@ -519,6 +619,20 @@
 	}
 
 	function fail(msg) { return { ok: false, error: msg }; }
+
+	// The adult a fly-directed command acts on: by id, else the first adult.
+	function targetFly(state, id) {
+		return id === undefined || id === null ? state.flies[0] || null : findFly(state, id);
+	}
+
+	function nearestFly(state, x, z) {
+		var best = state.flies[0], bd = Infinity;
+		for (var i = 0; i < state.flies.length; i++) {
+			var f = state.flies[i].fly, d = Math.hypot(f.x - x, f.z - z);
+			if (d < bd) { bd = d; best = state.flies[i]; }
+		}
+		return best;
+	}
 
 	function findById(list, id) {
 		for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
@@ -537,11 +651,35 @@
 	}
 
 	function deserialize(json) {
-		return typeof json === 'string' ? JSON.parse(json) : JSON.parse(JSON.stringify(json));
+		return refocus(upgrade(typeof json === 'string' ? JSON.parse(json) : JSON.parse(JSON.stringify(json))));
 	}
 
 	function clone(state) {
-		return JSON.parse(JSON.stringify(state));
+		var out = refocus(JSON.parse(JSON.stringify(state)));
+		// keep the same fly in focus
+		if (state.current) focus(out, findFly(out, state.current.id) || out.flies[0]);
+		return out;
+	}
+
+	function refocus(state) {
+		focus(state, state.flies[0] || null);
+		return state;
+	}
+
+	// States saved before the garden held several flies (exported logs) had
+	// one fly's fields at the top level; they become the first adult.
+	function upgrade(s) {
+		if (s.flies) return s;
+		var rec = { id: 'fly-1', sex: 'female', born: null, parents: null, fly: s.fly, drives: s.drives, behavior: s.behavior, pending: s.pending,
+			intake: s.intake, senseMemory: s.senseMemory || { odor: [], webs: {}, lastTime: -1 },
+			repro: { matings: 0, receptiveFrom: 0, eggs: 0, laid: 0, sire: null, partner: null, copulaUntil: -1,
+				courtTarget: null, courtStart: -1, courtSeen: -1, singing: false, layBlocked: false } };
+		if (rec.drives && rec.drives.egg === undefined) rec.drives.egg = 0;
+		FLY_FIELDS.forEach(function (k) { delete s[k]; });
+		s.flies = [rec];
+		s.brood = [];
+		s.nextFlyId = 2;
+		return s;
 	}
 
 	// Food the fly can actually reach and eat (for diagnostics and caretaker).
@@ -552,6 +690,11 @@
 	root.WorldRandom = WorldRandom;
 	root.WorldState = {
 		create: create,
+		newFly: newFly,
+		focus: focus,
+		eachFly: eachFly,
+		findFly: findFly,
+		nearestFly: nearestFly,
 		applyCommand: applyCommand,
 		updateFruit: updateFruit,
 		logEvent: logEvent,

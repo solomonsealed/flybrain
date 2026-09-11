@@ -142,6 +142,13 @@ function pauseFeeding(foodItem, now) {
 // Consumes motor-adapter outputs, local senses and body contacts. It never
 // receives fruit, tree or web coordinates and contains no route planner.
 // All durations, cooldowns and drive rates are in simulation seconds.
+//
+// Courtship and egg-laying (modeled, see world-life.js): a mature male who
+// sees an unmated female courts her ('court'); a receptive female who hears
+// his song and is calm stops for him ('accept'); a mounted pair copulates
+// ('copulate', ended by world-life.js); a gravid female whose head touches
+// fermenting fruit lays ('oviposit'). The policy acts on the fly in focus
+// (state.fly, state.repro, state.current: see world-state.js).
 // ============================================================
 
 var FlyPolicy = (function () {
@@ -149,14 +156,17 @@ var FlyPolicy = (function () {
 
 	function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
 
-	var ENTER = { escape: 0.6, walk: 0.18, feedProb: 0.55, groom: 0.75, brace: 0.45 };
-	var EXIT = { walk: 0.08, feedProb: 0.15, feedEscape: 0.25, startle: 0.2, rest: 0.25 };
+	var ENTER = { escape: 0.6, walk: 0.18, feedProb: 0.55, groom: 0.75, brace: 0.45, song: 0.25, calm: 0.05 };
+	var EXIT = { walk: 0.08, feedProb: 0.15, feedEscape: 0.25, startle: 0.2, rest: 0.25, song: 0.05 };
 	var FREEZE = 0.15;       // s of freezing before an escape run
 	var TURN_AWAY = 0.35;    // s of maximal turning at escape onset
+	var LOST_SIGHT = 1.0;    // s a courting male keeps going without seeing the female
 
 	function cooling(b, name, now) {
 		return b.cooldowns[name] !== undefined && now < b.cooldowns[name];
 	}
+
+	function flyId(state) { return state.current ? state.current.id : undefined; }
 
 	function transition(state, cfg, next, reason, motor) {
 		var b = state.behavior;
@@ -164,6 +174,7 @@ var FlyPolicy = (function () {
 		if (next === b.current) return;
 		var prev = b.current;
 		if (cfg.policy.cooldown[prev]) b.cooldowns[prev] = now + cfg.policy.cooldown[prev];
+		if (prev === 'court' && state.repro) { state.repro.courtTarget = null; state.repro.singing = false; }
 		b.current = next;
 		b.enterTime = now;
 		b.phase = 'none';
@@ -179,7 +190,7 @@ var FlyPolicy = (function () {
 		} else if (next === 'groom') {
 			b.groomLocation = state.pending.lastTouchLocation || 'thorax';
 		}
-		WorldState.logEvent(state, 'behavior', { from: prev, to: next, reason: reason || '' }, 'fly');
+		WorldState.logEvent(state, 'behavior', { from: prev, to: next, reason: reason || '', fly: flyId(state) }, 'fly');
 	}
 
 	function root_range(state, a, b) { return WorldRandom.range(state.rng, a, b); }
@@ -201,6 +212,7 @@ var FlyPolicy = (function () {
 			return;
 		}
 		if (cur === 'fly') return;  // flight ends on landing (see bodyCommand)
+		if (cur === 'copulate') return;  // the pair stays joined until copulation ends (world-life.js)
 
 		// Urgent defensive output interrupts any minimum duration.
 		if (motor.escape > ENTER.escape && cur !== 'startle' && !cooling(b, 'startle', now)) {
@@ -213,19 +225,86 @@ var FlyPolicy = (function () {
 			if (!senses.taste.fruitId) { transition(state, cfg, evaluate(state, cfg, motor, senses, true), 'contact lost', motor); return; }
 			if (motor.escape > EXIT.feedEscape) { transition(state, cfg, evaluate(state, cfg, motor, senses, true), 'defensive output interrupted feeding', motor); return; }
 		}
+		// Egg-laying lasts until world-life.js places the egg, unless contact
+		// with the fruit is lost or defense rises.
+		if (cur === 'oviposit') {
+			if (!layingSite(state, cfg, senses)) { transition(state, cfg, evaluate(state, cfg, motor, senses, true), 'lost the egg-laying site', motor); return; }
+			if (motor.escape > EXIT.feedEscape) { transition(state, cfg, evaluate(state, cfg, motor, senses, true), 'defensive output interrupted egg-laying', motor); return; }
+			return;
+		}
+		// Courtship lasts until the pair mounts (world-life.js) or it ends.
+		if (cur === 'court') {
+			var why = courtshipEnds(state, cfg, motor, senses);
+			if (why) transition(state, cfg, evaluate(state, cfg, motor, senses, false, true), why, motor);
+			return;
+		}
+		if (cur === 'accept' && elapsed >= minDur) {
+			var social = senses.social || {};
+			var rec = state.current;
+			var gone = !(social.song > EXIT.song) ? 'the song stopped' : motor.escape > 0.2 ? 'defensive output' :
+				!(rec && WorldLife.isReceptive(state, cfg, rec)) ? 'no longer receptive' : '';
+			if (gone) transition(state, cfg, evaluate(state, cfg, motor, senses, false, true), gone, motor);
+			return;
+		}
 		if (elapsed < minDur) return;
 		var next = evaluate(state, cfg, motor, senses, false);
-		if (next !== cur) transition(state, cfg, next, reasonFor(next, motor, senses), motor);
+		if (next === cur) return;
+		transition(state, cfg, next, reasonFor(next, motor, senses), motor);
+		if (next === 'court') {
+			var t = courtTarget(state, cfg, senses);
+			state.repro.courtTarget = t.id;
+			state.repro.courtStart = now;
+			state.repro.courtSeen = now;
+		}
 	}
 
-	function evaluate(state, cfg, motor, senses, noFeed) {
-		var b = state.behavior, now = state.time, cur = b.current, d = state.drives;
+	// The female a free, mature male would court: the nearest mature female
+	// in view who has not recently mated and is not already paired.
+	function courtTarget(state, cfg, senses) {
+		var rec = state.current, social = senses.social;
+		if (!rec || rec.sex !== 'male' || !social || !WorldLife.isMature(state, cfg, rec)) return null;
+		var best = null;
+		for (var i = 0; i < social.females.length; i++) {
+			var f = social.females[i];
+			if (f.mature && !f.mated && !f.busy && (!best || f.distance < best.distance)) best = f;
+		}
+		return best;
+	}
+
+	// The fruit a gravid female would lay on: fermenting fruit at her head or,
+	// once her egg urge is high, any ripe fruit (as WorldLife.layingSite).
+	function layingSite(state, cfg, senses) {
+		return senses.taste.fermentingId || ((state.drives.egg || 0) >= cfg.reproduction.layAnyFruitUrge ? senses.taste.fruitId : null);
+	}
+
+	function courtshipEnds(state, cfg, motor, senses) {
+		var rp = state.repro, now = state.time;
+		var t = senses.social && senses.social.target;
+		if (t) rp.courtSeen = now;
+		if (!t && now - rp.courtSeen > LOST_SIGHT) return 'lost sight of the female';
+		if (t && (t.mated || (t.busy && !t.accepting))) return 'she has mated';
+		if (now - rp.courtStart > cfg.reproduction.courtMaxDuration) return 'gave up: she did not accept';
+		if (motor.escape > EXIT.feedEscape) return 'defensive output interrupted courtship';
+		return '';
+	}
+
+	function evaluate(state, cfg, motor, senses, noFeed, noCourt) {
+		var b = state.behavior, now = state.time, cur = b.current, d = state.drives, rec = state.current;
 		if (cur === 'startle') {
 			if (motor.takeoff && !cooling(b, 'fly', now)) return 'fly';
 			if (motor.escape > EXIT.startle) return 'startle';
 		}
+		// a gravid female lays on fermenting fruit she touches, when calm
+		if (rec && rec.repro.eggs > 0 && !rec.repro.layBlocked && layingSite(state, cfg, senses) &&
+			motor.escape < 0.2 && !cooling(b, 'oviposit', now)) return 'oviposit';
 		if (!noFeed && senses.taste.fruitId && !cooling(b, 'feed', now) && motor.escape < 0.2 &&
 			motor.proboscis > (cur === 'feed' ? EXIT.feedProb : ENTER.feedProb)) return 'feed';
+		// Courtship and acceptance need a quiet connectome escape output (the
+		// loom readout itself runs well above zero while walking).
+		if (!noCourt && rec && senses.social && motor.escape < ENTER.calm) {
+			if (rec.sex === 'male' && d.fatigue < 0.7 && !cooling(b, 'court', now) && courtTarget(state, cfg, senses)) return 'court';
+			if (rec.sex === 'female' && senses.social.song > ENTER.song && WorldLife.isReceptive(state, cfg, rec)) return 'accept';
+		}
 		if (motor.brace > ENTER.brace && !cooling(b, 'brace', now)) return 'brace';
 		if ((motor.groom > ENTER.groom || (cur === 'groom' && motor.groom > 0.3)) && motor.threat < 0.2 && !cooling(b, 'groom', now)) return 'groom';
 		var restThr = senses.light.level < 0.1 ? 0.4 : 0.7;
@@ -244,6 +323,9 @@ var FlyPolicy = (function () {
 		case 'brace': return 'gust on the antennae';
 		case 'fly': return 'takeoff output';
 		case 'idle': return 'low walking drive';
+		case 'court': return 'sees an unmated female';
+		case 'accept': return 'hears courtship song';
+		case 'oviposit': return 'carrying an egg; fermenting fruit under her';
 		default: return '';
 		}
 	}
@@ -287,7 +369,17 @@ var FlyPolicy = (function () {
 		case 'brace':
 			cmd.yawRate = 2.0 * Math.sin(senses.wind.sourceBearing);
 			break;
+		case 'court':
+			// modeled pursuit: keep followDistance behind her, turning toward
+			// her (courtTurn) and away from threats and touch
+			var tg = senses.social && senses.social.target;
+			if (!tg) break;
+			var c = motor.contributions;
+			cmd.speed = clamp((tg.distance - cfg.reproduction.followDistance) * 2.5, 0, bc.walkSpeed * 1.3);
+			cmd.yawRate = (c.courtTurn || 0) + (c.threatTurn || 0) + (c.touchTurn || 0);
+			break;
 		default:
+			// idle, feed, groom, rest, accept, copulate, oviposit: standing
 			break;
 		}
 		return cmd;
@@ -322,7 +414,7 @@ var FlyPolicy = (function () {
 		state.intake.nutrition += nutrition;
 		if (state.intake.lastFruitId !== best.id) {
 			state.intake.lastFruitId = best.id;
-			WorldState.logEvent(state, 'feeding', { fruitId: best.id, species: best.species }, 'fly');
+			WorldState.logEvent(state, 'feeding', { fruitId: best.id, species: best.species, fly: flyId(state) }, 'fly');
 		}
 		return eaten;
 	}
@@ -331,7 +423,9 @@ var FlyPolicy = (function () {
 	// intended timescales hold (e.g. fear retention 0.85 per 0.5 s).
 	function updateDrives(state, cfg, dt, motor, senses) {
 		var d = state.drives, dc = cfg.drives, cur = state.behavior.current;
-		var moving = cur === 'walk' || cur === 'startle';
+		var moving = cur === 'walk' || cur === 'startle' || cur === 'court';
+		// modeled: a gravid female's urge to lay rises until she lays
+		if (d.egg !== undefined) d.egg = state.repro && state.repro.eggs > 0 ? d.egg + cfg.reproduction.eggDriveRate * dt : 0;
 		var flying = cur === 'fly';
 		var dark = senses.light.level < 0.3;
 		d.hunger += dc.hungerRate * dt;
@@ -357,6 +451,9 @@ var FlyPolicy = (function () {
 		bodyCommand: bodyCommand,
 		feedStep: feedStep,
 		updateDrives: updateDrives,
+		// world-life.js moves the focused fly between states (mounting,
+		// the end of copulation, a laid egg)
+		enter: function (state, cfg, next, reason) { transition(state, cfg, next, reason, null); },
 		ENTER: ENTER,
 		EXIT: EXIT
 	};

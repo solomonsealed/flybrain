@@ -215,12 +215,34 @@
 
 	/* ================= encoder ================= */
 
+	// Stimulus under construction: neuron indices and per-tick intensities in
+	// typed buffers reused every step (population lists are Uint32Arrays, so
+	// a run of cells is one block copy). Each step's stimulus is copied out at
+	// its size, because those copies are transferred to the worker.
+	function StimBuffer() { this.idx = new Uint32Array(4096); this.val = new Float32Array(4096); this.n = 0; }
+	StimBuffer.prototype.add = function (list, count, intensity) {
+		var need = this.n + count;
+		if (need > this.idx.length) {
+			var cap = this.idx.length;
+			while (cap < need) cap *= 2;
+			var idx = new Uint32Array(cap), val = new Float32Array(cap);
+			idx.set(this.idx.subarray(0, this.n));
+			val.set(this.val.subarray(0, this.n));
+			this.idx = idx;
+			this.val = val;
+		}
+		this.idx.set(list.length === count ? list : list.subarray(0, count), this.n);
+		this.val.fill(intensity, this.n, need);
+		this.n = need;
+	};
+
 	// Input channels. `pop` names a sidecar population (sorted indices);
 	// `group` names a binary group used when no sidecar population applies.
 	function createEncoder(cfg, popsInfo) {
 		var bc = cfg.brain;
 		var pops = popsInfo.pops, groups = popsInfo.groups;
 		var lastInputs = {};
+		var sus = new StimBuffer(), pul = new StimBuffer();
 		// Receptor adaptation: each antenna's odor drive is divided by a slow
 		// running level, so sustained odor compresses and rising odor stands out.
 		var adapt = { L: 0, R: 0 };
@@ -232,13 +254,13 @@
 			signal = clamp(signal, 0, 1);
 			var n = Math.max(1, Math.round(list.length * Math.pow(signal, 0.8)));
 			var intensity = (bc.stimMin + (bc.stimMax - bc.stimMin) * signal) * (intensityScale || 1);
-			for (var k = 0; k < n; k++) { target.idx.push(list[k]); target.val.push(intensity); }
+			target.add(list, n, intensity);
 			return n;
 		}
 
 		function bulk(target, list, intensity) {
 			if (!list || list.length === 0 || !(intensity > 0)) return 0;
-			for (var k = 0; k < list.length; k++) { target.idx.push(list[k]); target.val.push(intensity); }
+			target.add(list, list.length, intensity);
 			return list.length;
 		}
 
@@ -247,14 +269,16 @@
 
 		// Returns {stimulus, pulses, inputs} for one neural step.
 		function encode(senses, drives, silenced) {
-			var sus = { idx: [], val: [] };
-			var pul = { idx: [], val: [] };
+			sus.n = 0;
+			pul.n = 0;
 			var inputs = {};
 			var hunger = drives.hunger;
 			var food = !silenced.foodInput, threat = !silenced.threatInput;
 
-			// olfaction: graded, side-specific, hunger-modulated gain, adapting
-			var og = lerpGain(bc.hungerOdorGain, hunger);
+			// olfaction: graded, side-specific, hunger-modulated gain, adapting.
+			// A gravid female's urge to lay (modeled) raises the gain as hunger
+			// does: mated females seek fermenting, yeasty fruit.
+			var og = lerpGain(bc.hungerOdorGain, Math.max(hunger, drives.egg || 0));
 			var xL = senses.odor.left * og, xR = senses.odor.right * og;
 			var aa = 1 - Math.exp(-bc.neuralDt / bc.odorAdaptTau);
 			adapt.L += (xL - adapt.L) * aa;
@@ -319,8 +343,8 @@
 			inputs.tonic = tonic;
 			lastInputs = inputs;
 			return {
-				stimulus: { indices: Uint32Array.from(sus.idx), intensities: Float32Array.from(sus.val) },
-				pulses: pul.idx.length ? { indices: Uint32Array.from(pul.idx), intensities: Float32Array.from(pul.val) } : null,
+				stimulus: { indices: sus.idx.slice(0, sus.n), intensities: sus.val.slice(0, sus.n) },
+				pulses: pul.n ? { indices: pul.idx.slice(0, pul.n), intensities: pul.val.slice(0, pul.n) } : null,
 				inputs: inputs
 			};
 		}
@@ -399,7 +423,8 @@
 		wander:      { source: 'modeled', label: 'Modeled VNC pattern generator: exploratory turning noise' },
 		bouts:       { source: 'modeled', label: 'Modeled VNC pattern generator: walking bouts alternate with pauses' },
 		groom:       { source: 'modeled', label: 'Grooming urge (SEZ_GROOM is empty in the export)' },
-		brace:       { source: 'modeled', label: 'Johnston\'s organ response braces against gusts' }
+		brace:       { source: 'modeled', label: 'Johnston\'s organ response braces against gusts' },
+		courtTurn:   { source: 'modeled', label: 'Modeled courtship: a courting male turns toward the female he sees (the male courtship circuit, P1 and its partners, is not in this female connectome)' }
 	};
 
 	// Gains (modeled VNC). Spans convert rate responses (fraction of a
@@ -416,6 +441,7 @@
 		escapeThreshold: 0.55, escapeSpan: 0.5, threatDeadZone: 0.2, touchDeadZone: 0.15, fearSensitization: 0.2,
 		klinoGain: 1.2,
 		surgeGain: 0.6,
+		courtTurnGain: 5.0,              // rad/s per rad of bearing to the courted female
 		stopRate: 0.07, goRate: 0.45     // per s: bout switching of the modeled pattern generator
 	};
 
@@ -486,7 +512,11 @@
 			c.wander = silenced.motorOutput ? 0 : wander * out.walkDrive * klino;
 			out.klinokinesis = klino;
 
-			out.turn = c.threatTurn + c.touchTurn + c.odorTurn + c.upwindTurn + c.wander;
+			// modeled courtship pursuit: senses carry a target only while courting
+			var tgt = senses.social && senses.social.target;
+			c.courtTurn = tgt && !silenced.motorOutput ? MOTOR.courtTurnGain * clamp(tgt.bearing, -1.2, 1.2) : 0;
+
+			out.turn = c.threatTurn + c.touchTurn + c.odorTurn + c.upwindTurn + c.wander + c.courtTurn;
 
 			// urgent defensive output; fear lowers the threshold (sensitization)
 			var drive = Math.max(0, threatMax - MOTOR.threatDeadZone) + 0.8 * Math.max(0, touchMax - MOTOR.touchDeadZone);
@@ -518,13 +548,15 @@
 
 	// Connectome backend: drives a sim-worker in step mode. `port` is either a
 	// browser Worker or the Node harness ({post: fn} returning replies).
+	// Each fly has a brain slot (request.brain) in the worker: its own neuron
+	// state over the one shared connectome.
 	function createConnectomeBackend(opts) {
 		var port = opts.port;
 		var ready = opts.ready, meta = opts.meta;
 		var popsInfo = buildPopulations(ready, meta, opts.sidecar, opts.manifest);
 		var available = READOUT_POPS.filter(function (n) { return popsInfo.pops[n] && popsInfo.pops[n].length > 0; });
 		var sizes = available.map(function (n) { return popsInfo.pops[n].length; });
-		var pending = {};
+		var pending = {}, pendingBatches = {}, batchSeq = 0;
 		var sync = typeof port.post === 'function';
 
 		function send(msg, transfer) {
@@ -546,28 +578,57 @@
 					var cb = pending[d.stepId];
 					delete pending[d.stepId];
 					cb(d);
+				} else if (d && d.type === 'stepBatchResult' && pendingBatches[d.batchId]) {
+					var bcb = pendingBatches[d.batchId];
+					delete pendingBatches[d.batchId];
+					bcb(d.results);
 				} else if (prev) {
 					prev.call(port, e);
 				}
 			};
 		}
 
-		// request: {stepId, stimulus, pulses, wantFireState}; cb(result)
-		function step(request, cb) {
-			var msg = { type: 'step', stepId: request.stepId, ticks: opts.ticksPerStep || 1,
+		function stepMessage(request) {
+			return { type: 'step', brain: request.brain || 0, stepId: request.stepId, ticks: opts.ticksPerStep || 1,
 				stimulus: request.stimulus, pulses: request.pulses, wantFireState: !!request.wantFireState };
+		}
+
+		function transfers(request, tr) {
+			if (request.stimulus) tr.push(request.stimulus.indices.buffer, request.stimulus.intensities.buffer);
+			if (request.pulses) tr.push(request.pulses.indices.buffer, request.pulses.intensities.buffer);
+			return tr;
+		}
+
+		// request: {brain, stepId, stimulus, pulses, wantFireState}; cb(result)
+		function step(request, cb) {
+			var msg = stepMessage(request);
 			if (sync) {
 				cb(send(msg));
 			} else {
 				pending[request.stepId] = cb;
+				send(msg, transfers(request, []));
+			}
+		}
+
+		// Steps several brains (one per fly) in one worker message, so the
+		// garden has one outstanding neural batch however many flies it
+		// holds. cb(results) receives the results in request order.
+		function stepAll(requests, cb) {
+			var msg = { type: 'stepBatch', batchId: ++batchSeq, steps: requests.map(stepMessage) };
+			if (sync) {
+				cb(send(msg).results);
+			} else {
+				pendingBatches[msg.batchId] = cb;
 				var tr = [];
-				if (request.stimulus) tr.push(request.stimulus.indices.buffer, request.stimulus.intensities.buffer);
-				if (request.pulses) tr.push(request.pulses.indices.buffer, request.pulses.intensities.buffer);
+				requests.forEach(function (r) { transfers(r, tr); });
 				send(msg, tr);
 			}
 		}
 
+		// reset(): every brain back to rest and all but brain 0 released;
+		// resetBrain(n): one brain back to rest (a new fly's brain).
 		function reset() { send({ type: 'reset' }); }
+		function resetBrain(brain) { send({ type: 'reset', brain: brain }); }
 
 		return {
 			kind: 'connectome',
@@ -578,7 +639,9 @@
 			groupNames: meta.groups.map(function (g) { return g.name; }),
 			groupSizes: meta.group_sizes,
 			step: step,
+			stepAll: stepAll,
 			reset: reset,
+			resetBrain: resetBrain,
 			synchronous: sync
 		};
 	}
@@ -586,16 +649,45 @@
 	// Fallback backend: the 59-group hand-authored approximation (constants.js).
 	// It has no hemispheres, so its left/right readouts are identical and any
 	// steering comes from the modeled circuit; the UI labels this mode.
+	// BRAIN is one global model, so each fly's group activity and
+	// accumulators are saved and restored around its step.
 	function createLegacyBackend(opts) {
 		var B = opts.BRAIN;
 		var legacyUpdate = opts.legacyUpdate || B.update;
 		var names = ['DN_L', 'DN_R', 'DN_ODOR_RANKED_L', 'DN_ODOR_RANKED_R', 'DN_LOOM_RANKED_L', 'DN_LOOM_RANKED_R',
 			'DN_TOUCH_RANKED_L', 'DN_TOUCH_RANKED_R', 'MN_PROBOSCIS', 'JO_WIND_L', 'JO_WIND_R'];
 		var sizes = names.map(function () { return 100; });
+		var ACCUMS = ['accumWalkLeft', 'accumWalkRight', 'accumFlight', 'accumFeed', 'accumGroom', 'accumStartle', 'accumHead', 'accumleft', 'accumright'];
+		var saved = {}, loaded = 0;
+
+		function capture() {
+			var s = { ps: {}, thisState: B.thisState, nextState: B.nextState };
+			for (var k in B.postSynaptic) s.ps[k] = [B.postSynaptic[k][0], B.postSynaptic[k][1]];
+			ACCUMS.forEach(function (a) { s[a] = B[a]; });
+			return s;
+		}
+		function load(s) {
+			for (var k in B.postSynaptic) {
+				var v = s ? s.ps[k] : null;
+				B.postSynaptic[k][0] = v ? v[0] : 0;
+				B.postSynaptic[k][1] = v ? v[1] : 0;
+			}
+			B.thisState = s ? s.thisState : 0;
+			B.nextState = s ? s.nextState : 1;
+			ACCUMS.forEach(function (a) { B[a] = s ? s[a] : 0; });
+		}
+		function use(brain) {
+			brain = brain || 0;
+			if (brain === loaded) return;
+			saved[loaded] = capture();
+			load(saved[brain] || null);
+			loaded = brain;
+		}
 
 		function ps(n) { return B.postSynaptic[n] ? B.postSynaptic[n][B.thisState] : 0; }
 
 		function step(request, cb) {
+			use(request.brain);
 			var inp = request.inputs;
 			B.stimulate.foodNearby = (inp.odorL + inp.odorR) > 0.2;
 			B.stimulate.foodContact = inp.sugar > 0.05;
@@ -620,13 +712,23 @@
 				popSpikeCounts: counts.map(function (v) { return Math.max(0, v) * 0.1; }), firedNeurons: 0 });
 		}
 
+		// The panels show BRAIN, so the first requested brain is left loaded.
+		function stepAll(requests, cb) {
+			var out = [];
+			requests.forEach(function (r) { step(r, function (res) { out.push(res); }); });
+			if (requests.length) use(requests[0].brain);
+			cb(out);
+		}
+
 		return {
 			kind: 'legacy',
 			label: '59-group approximation (fallback)',
 			readoutNames: names,
 			readoutSizes: sizes,
 			step: step,
-			reset: function () { B.setup(); },
+			stepAll: stepAll,
+			reset: function () { B.setup(); saved = {}; loaded = 0; },
+			resetBrain: function (brain) { if (brain === loaded) load(null); else saved[brain] = null; },
 			synchronous: true
 		};
 	}

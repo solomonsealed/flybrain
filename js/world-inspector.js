@@ -18,13 +18,17 @@
 
 	var BEHAVIOR_COLORS = {
 		walk: '#8cc8ff', feed: '#ffcc40', startle: '#ff5a4d', fly: '#d88cff', groom: '#99ff99',
-		rest: '#9999b3', idle: '#8a8a8a', brace: '#99e6e6', snagged: '#ff3399'
+		rest: '#9999b3', idle: '#8a8a8a', brace: '#99e6e6', snagged: '#ff3399',
+		court: '#ff8ccc', accept: '#ffbfd9', copulate: '#f27aa6', oviposit: '#ccf280'
 	};
 
 	var BEHAVIOR_WORDS = {
 		walk: 'walking', feed: 'feeding', startle: 'escaping', fly: 'flying', groom: 'grooming',
-		rest: 'resting', idle: 'standing still', brace: 'bracing against the wind', snagged: 'caught in silk'
+		rest: 'resting', idle: 'standing still', brace: 'bracing against the wind', snagged: 'caught in silk',
+		court: 'courting', accept: 'accepting a male', copulate: 'mating', oviposit: 'laying an egg'
 	};
+
+	var STAGE_WORDS = { egg: 'Egg', larva: 'Larva', pupa: 'Pupa' };
 
 	function create(app) {
 		var cfg = app.config;
@@ -104,7 +108,20 @@
 
 		/* ---------- events ---------- */
 
+		// With several flies, fly-specific events name their fly.
 		function describe(ev) {
+			var text = describeEvent(ev), d = ev.data || {};
+			var st = app.sim ? app.sim.state : null;
+			if (d.fly && st && st.flies.length + st.brood.length > 1 && ev.type !== 'eclosed' && ev.type !== 'egg-laid') text = flyLabel(d.fly) + ': ' + text;
+			return text;
+		}
+
+		function flyLabel(id) {
+			var st = app.sim ? app.sim.state : null, r = st ? WS.findFly(st, id) : null;
+			return r && app.flyName ? app.flyName(r) : String(id).replace('fly-', 'fly ');
+		}
+
+		function describeEvent(ev) {
 			var d = ev.data || {};
 			switch (ev.type) {
 			case 'behavior':
@@ -113,7 +130,17 @@
 				if (d.to === 'startle') return 'Startle and escape: ' + d.reason;
 				if (d.to === 'fly') return 'Took off';
 				if (d.to === 'snagged') return 'Caught in silk';
+				if (d.to === 'court') return 'Began courting (' + d.reason + ')';
+				if (d.from === 'court' && d.to !== 'copulate') return 'Stopped courting: ' + d.reason;
+				if (d.to === 'copulate') return 'Mating (' + d.reason + ')';
+				if (d.to === 'oviposit') return 'Laying an egg (' + d.reason + ')';
 				return 'Now ' + (BEHAVIOR_WORDS[d.to] || d.to) + (d.reason ? ' (' + d.reason + ')' : '');
+			case 'mating': return flyLabel(d.male) + ' mounted ' + flyLabel(d.female);
+			case 'mated': return flyLabel(d.female) + ' mated with ' + flyLabel(d.male) + ' (' + d.eggs + ' egg' + (d.eggs === 1 ? '' : 's') + ')';
+			case 'egg-laid': return flyLabel(d.fly) + ' laid an egg on fermenting fruit';
+			case 'hatched': return 'An egg hatched into a larva (' + String(d.id).replace('fly-', 'fly ') + ')';
+			case 'pupated': return 'A larva pupated beside its fruit (' + String(d.id).replace('fly-', 'fly ') + ')';
+			case 'eclosed': return 'A new ' + d.sex + ' emerged: ' + flyLabel(d.fly);
 			case 'silk-contact': return 'Touched silk of ' + webName(d.webId) + ' (' + d.side + ' side)';
 			case 'silk-release': return 'Pulled free of ' + webName(d.webId) + ' after ' + fmt(d.held, 1) + ' s';
 			case 'fruit-fell': return 'A ' + d.species + ' fell from its tree';
@@ -189,11 +216,19 @@
 				{ key: 'escape', color: '#ff3b30', label: 'escape' }] }
 		];
 
+		// the focused fly's neural data
+		function focusAgent() {
+			if (!app.sim) return null;
+			var rec = app.focusRec ? app.focusRec() : app.sim.state.flies[0];
+			return rec ? app.sim.agent(rec.id) : null;
+		}
+
 		function drawTrace() {
-			if (!tctx || !app.sim) return;
+			var ag = focusAgent();
+			if (!tctx || !ag) return;
 			var W = trace.width, H = trace.height;
 			tctx.clearRect(0, 0, W, H);
-			var recs = app.sim.trace;
+			var recs = ag.trace;
 			if (!recs.length) return;
 			var tEnd = recs[recs.length - 1].t, window = 30, tStart = tEnd - window;
 			var laneH = (H - 34) / LANES.length;
@@ -256,15 +291,16 @@
 		})();
 
 		function drawContributions() {
-			var el = $('wiContrib');
-			if (!el || !app.sim || !app.sim.motorOut) return;
-			var c = app.sim.motorOut.contributions;
+			var el = $('wiContrib'), ag = focusAgent();
+			if (!el || !ag || !ag.motorOut) return;
+			var c = ag.motorOut.contributions;
 			var CH = root.WorldBrainAdapter.MOTOR_CHANNELS;
 			var parts = Object.keys(c).map(function (k) {
 				var src = CH[k] ? CH[k].source : 'modeled';
 				return '<span class="wi-contrib wi-' + src + '" title="' + escapeHtml(CH[k] ? CH[k].label : k) + '">' + k + ' ' + (c[k] >= 0 ? '+' : '') + fmt(c[k], 2) + '</span>';
 			});
-			el.innerHTML = 'Turn command (rad/s) = ' + parts.join(' ') +
+			var st = app.sim.state;
+			el.innerHTML = (st.flies.length > 1 && app.flyName ? escapeHtml(app.flyName(app.focusRec())) + ' · ' : '') + 'Turn command (rad/s) = ' + parts.join(' ') +
 				'<br><span class="wi-contrib wi-connectome">connectome</span> terms come from worker readouts; <span class="wi-contrib wi-modeled">modeled</span> terms are the documented adapter.';
 		}
 
@@ -280,32 +316,51 @@
 			var el = $('wiSelection');
 			if (!el || !app.sim) return;
 			var st = app.sim.state, sim = app.sim;
-			if (!selection) { el.innerHTML = 'Choose <b>Observe</b>, then click a fruit, a web or the fly.'; return; }
+			if (!selection) { el.innerHTML = 'Choose <b>Observe</b>, then click a fruit, a web, a fly or its young.'; return; }
 			var html = '';
+			var focus = app.focusRec ? app.focusRec() : st.flies[0], fag = sim.agent(focus.id);
 			if (selection.type === 'fruit') {
 				var f = WS.findById(st.fruits, selection.id);
 				if (!f) { el.textContent = 'That fruit is gone.'; return; }
 				var edible = WS.isEdible(f);
+				var young = st.brood.filter(function (e) { return e.fruitId === f.id && e.stage !== 'pupa'; }).length;
 				html = '<h4>' + cap(f.species) + ' fruit</h4>' + row('Stage', f.stage === 'attached' ? 'on the branch (not reachable)' : f.stage) +
 					row('Ripeness', pct(f.ripeness)) + row('Food left', pct(f.amount)) + row('Smell strength', fmt(WS.fruitOdor(cfg, f))) +
 					row('Sugar', fmt(WS.fruitSugar(cfg, f))) + row('Counts as available food', edible ? 'yes' : 'no') +
-					row('Placed by', f.source) + row('Distance to fly', fmt(Math.hypot(f.x - st.fly.x, f.z - st.fly.z), 1) + ' BL');
+					row('Egg-laying site', f.stage === 'fermenting' ? 'yes (fermenting)' : 'no') + (young ? row('Eggs and larvae on it', young) : '') +
+					row('Placed by', f.source) + row('Distance to ' + (st.flies.length > 1 ? 'focused fly' : 'fly'), fmt(Math.hypot(f.x - focus.fly.x, f.z - focus.fly.z), 1) + ' BL');
 			} else if (selection.type === 'web') {
 				var w = WS.findById(st.webs, selection.id);
 				if (!w) { el.textContent = 'That web is gone.'; return; }
 				var sensed = null;
-				if (sim.lastSenses) sim.lastSenses.threat.webs.forEach(function (x) { if (x.id === w.id) sensed = x; });
-				html = '<h4>' + escapeHtml(w.label) + '</h4>' + row('Distance to fly', sensed ? fmt(sensed.distance, 1) + ' BL' : '-') +
+				if (fag && fag.lastSenses) fag.lastSenses.threat.webs.forEach(function (x) { if (x.id === w.id) sensed = x; });
+				html = '<h4>' + escapeHtml(w.label) + '</h4>' + row('Distance to ' + (st.flies.length > 1 ? 'focused fly' : 'fly'), sensed ? fmt(sensed.distance, 1) + ' BL' : '-') +
 					row('Seen by', sensed ? (sensed.left > 0 && sensed.right > 0 ? 'both eyes' : sensed.left > 0 ? 'left eye' : sensed.right > 0 ? 'right eye' : 'neither eye') : '-') +
 					row('Apparent size', sensed ? fmt(sensed.angularSize * 180 / Math.PI, 0) + '°' : '-') +
 					row('Looming (expansion)', sensed ? fmt(sensed.expansion * 180 / Math.PI, 0) + '°/s' : '-') +
 					row('Line of sight', sensed ? pct(sensed.visibility) : '-') + row('Silk contrast', sensed ? fmt(sensed.contrast) : '-') +
 					row('Visual threat input', sensed ? fmt(sensed.intensity) : '-') + row('Contacts so far', w.contacts) + row('Placed by', w.source) +
 					'<p class="wi-note">Treating visible silk as aversive is a modeling assumption; flies have looming detectors, not a known web detector.</p>';
+			} else if (selection.type === 'brood') {
+				var e = WS.findById(st.brood, selection.id);
+				if (!e) { var grown = WS.findFly(st, selection.id); el.textContent = grown ? 'It has emerged as ' + flyLabel(grown.id) + '.' : 'That one is gone.'; return; }
+				var next = e.stage === 'egg' ? 'hatches' : e.stage === 'larva' ? 'pupates' : 'emerges as an adult';
+				html = '<h4>' + STAGE_WORDS[e.stage] + ' (' + escapeHtml(e.id.replace('fly-', 'fly ')) + ')</h4>' +
+					row('Sex', e.sex) + row('Parents', e.parents ? e.parents.map(flyLabel).join(' × ') : '-') +
+					row('Age', fmt(st.time - e.laid, 0) + ' s') + row('Next', next + ' in ' + fmt(WorldLife.timeToNextStage(st, cfg, e), 0) + ' s') +
+					(e.stage === 'pupa' && WorldLife.settlingPupae(st, cfg).indexOf(e) !== -1 ? row('Brain', 'settling (its connectome copy is running in clean air)') : '') +
+					'<p class="wi-note">The life cycle is compressed about 9,000-fold: roughly 13 s of garden time per fly day.</p>';
 			} else if (selection.type === 'fly') {
-				var s = sim.lastSenses, m = sim.motorOut, r = sim.readout.rates;
-				html = '<h4>The fly</h4>' + row('Doing', BEHAVIOR_WORDS[st.behavior.current] || st.behavior.current) +
-					row('Hunger / fear*', fmt(st.drives.hunger) + ' / ' + fmt(st.drives.fear)) +
+				var fr = WS.findFly(st, selection.id) || focus, ag = sim.agent(fr.id);
+				var s = ag.lastSenses, m = ag.motorOut, r = ag.readout.rates, rp = fr.repro;
+				var mature = WorldLife.isMature(st, cfg, fr);
+				var status = fr.sex === 'female' ? (rp.eggs > 0 ? 'carrying ' + rp.eggs + ' egg' + (rp.eggs === 1 ? '' : 's') :
+					WorldLife.isReceptive(st, cfg, fr) ? 'receptive' : !mature ? 'not yet mature' : rp.partner ? 'mating' : 'recently mated') :
+					(!mature ? 'not yet mature' : rp.partner ? 'mating' : 'mature');
+				html = '<h4>' + (st.flies.length > 1 && app.flyName ? escapeHtml(app.flyName(fr)) : 'The fly') + '</h4>' + row('Doing', BEHAVIOR_WORDS[fr.behavior.current] || fr.behavior.current) +
+					row('Age', fr.born === null ? 'founder' : fmt(st.time - fr.born, 0) + ' s since emerging') +
+					row('Reproduction*', status + (rp.matings ? ' · mated ' + rp.matings + '×' : '') + (rp.laid ? ' · ' + rp.laid + ' laid' : '')) +
+					row('Hunger / fear*', fmt(fr.drives.hunger) + ' / ' + fmt(fr.drives.fear)) +
 					row('Smell L / R', s ? fmt(s.odor.left) + ' / ' + fmt(s.odor.right) : '-') +
 					row('Web cue L / R', s ? fmt(s.threat.left) + ' / ' + fmt(s.threat.right) : '-') +
 					row('Taste', s && s.taste.sugar > 0 ? 'sugar ' + fmt(s.taste.sugar) : 'nothing') +
@@ -313,8 +368,9 @@
 					row('Loom DN L / R', fmt((r.DN_LOOM_RANKED_L || 0) * 100, 1) + '% / ' + fmt((r.DN_LOOM_RANKED_R || 0) * 100, 1) + '%') +
 					row('Proboscis MN', fmt((r.MN_PROBOSCIS || 0) * 100, 1) + '%') +
 					row('Walk / turn / escape', m ? fmt(m.walkDrive) + ' / ' + fmt(m.turn) + ' / ' + fmt(m.escape) : '-') +
-					row('Eaten so far', fmt(st.intake.total) + ' portions') +
-					'<p class="wi-note">Rates are the fraction of each population firing per tick. *Fear is a modeled defensive state driven by neural threat and touch readouts.</p>';
+					row('Eaten so far', fmt(fr.intake.total) + ' portions') +
+					'<p class="wi-note">Rates are the fraction of each population firing per tick. *Fear is a modeled defensive state driven by neural threat and touch readouts. ' +
+					'*Courtship, mating and egg-laying are modeled programs: every fly runs the same female FlyWire connectome, which has no male courtship circuit.</p>';
 			}
 			el.innerHTML = html;
 		}
@@ -325,16 +381,26 @@
 		/* ---------- explanation line ---------- */
 
 		function explain() {
-			var sim = app.sim;
-			if (!sim || !sim.motorOut || !sim.lastSenses) return '';
-			var st = sim.state, m = sim.motorOut, s = sim.lastSenses, b = st.behavior.current;
+			var sim = app.sim, ag = focusAgent();
+			if (!sim || !ag || !ag.motorOut || !ag.lastSenses) return '';
+			var line = explainFocused(sim, ag);
+			return sim.state.flies.length > 1 && line && app.flyName ? app.flyName(app.focusRec()) + ': ' + line : line;
+		}
+
+		function explainFocused(sim, ag) {
+			var st = sim.state, rec = app.focusRec ? app.focusRec() : st.flies[0];
+			var m = ag.motorOut, s = ag.lastSenses, b = rec.behavior.current;
 			var modeled = function (k) { var ch = root.WorldBrainAdapter.MOTOR_CHANNELS[k]; return ch && ch.source === 'modeled' ? ' (modeled)' : ''; };
 			switch (b) {
-			case 'feed': return 'Eating: sugar on the proboscis keeps proboscis motor neurons firing (output ' + fmt(m.proboscis) + '). Hunger ' + fmt(st.drives.hunger) + '.';
+			case 'court': return 'Courting' + (rec.repro.singing ? ' and singing' : '') + ': following a female he can see (modeled courtship; the male courtship circuit is not in this female connectome).';
+			case 'accept': return 'Standing for a singing male: she is receptive and her escape output is quiet (modeled acceptance).';
+			case 'copulate': return 'Mating: ' + fmt(Math.max(0, rec.repro.copulaUntil - st.time), 0) + ' s left. Each mating gives one egg (modeled).';
+			case 'oviposit': return 'Laying an egg: her head is on fermenting fruit, where fruit fly larvae feed on yeast (modeled).';
+			case 'feed': return 'Eating: sugar on the proboscis keeps proboscis motor neurons firing (output ' + fmt(m.proboscis) + '). Hunger ' + fmt(rec.drives.hunger) + '.';
 			case 'startle': return 'Escaping: the looming readout rose on the ' + (m.escapeSign > 0 ? 'right' : 'left') + ' side, so the escape output won (' + fmt(m.escape) + ').';
 			case 'fly': return 'Flying away after a strong escape output.';
 			case 'snagged': return 'Caught in silk: touch neurons fire; the fly struggles until it pulls free.';
-			case 'rest': return 'Resting: fatigue ' + fmt(st.drives.fatigue) + ' is high and nothing alarming is in view.';
+			case 'rest': return 'Resting: fatigue ' + fmt(rec.drives.fatigue) + ' is high and nothing alarming is in view.';
 			case 'groom': return 'Grooming: the grooming urge peaked' + modeled('groom') + '.';
 			case 'brace': return 'Bracing: Johnston\'s organ reports a gust.';
 			case 'idle': return 'Standing: descending-neuron activity is too low to drive walking.';
@@ -356,10 +422,12 @@
 			var el = $('wiRunInfo');
 			if (!el || !app.sim) return;
 			var sim = app.sim, st = sim.clock.stats;
-			var res = sim.lastResult;
+			var c = WorldLife.census(sim.state), brainMs = 0, brains = 0;
+			for (var id in sim.agents) { var r = sim.agents[id].lastResult; if (r && r.computeMs !== undefined) { brainMs += r.computeMs; brains++; } }
 			el.innerHTML = 'Run: <b>' + escapeHtml(cfg.scenarios[sim.log.scenario || 'free'].label) + '</b>, seed ' + sim.state.seed + ', ' + escapeHtml(sim.backend.label) +
+				'<br>Flies: ' + c.adults + ' adults (' + c.females + '♀ ' + c.males + '♂), ' + c.eggs + ' eggs, ' + c.larvae + ' larvae, ' + c.pupae + ' pupae · ' + c.total + ' of ' + cfg.population.max +
 				'<br>Sim time ' + fmt(sim.state.time, 1) + ' s · sim/wall ' + fmt(st.ratio, 2) + (sim.clock.stalled ? ' · <b>waiting for brain</b>' : '') +
-				(res && res.computeMs !== undefined ? ' · brain step ' + fmt(res.computeMs, 1) + ' ms' : '') +
+				(brains ? ' · brain steps ' + fmt(brainMs, 1) + ' ms for ' + brains + ' brain' + (brains === 1 ? '' : 's') : '') +
 				(app.stepLatency ? ' · round trip ' + fmt(app.stepLatency, 1) + ' ms' : '') +
 				perfLine() +
 				(app.replayStatus ? '<br>' + app.replayStatus : '');

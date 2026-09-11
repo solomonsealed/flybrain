@@ -41,6 +41,17 @@
 				list.push({ kind: 'fruit', id: f.id, x: f.x, z: f.z, r: f.radius * 0.8 * Math.max(0.35, Math.min(1, f.amount)) });
 			}
 		}
+		// Other adults at about the same height are solid (bodies bump and
+		// push apart); a copulating pair is not solid to itself.
+		var flies = state.flies;
+		if (flies && flies.length > 1) {
+			var partner = state.repro && state.repro.partner;
+			for (i = 0; i < flies.length; i++) {
+				var o = flies[i];
+				if (o.fly === state.fly || o.id === partner || Math.abs(o.fly.y - altitude) > 0.6) continue;
+				list.push({ kind: 'fly', id: o.id, x: o.fly.x, z: o.fly.z, r: cfg.fly.collisionRadius });
+			}
+		}
 		return list;
 	}
 
@@ -201,7 +212,7 @@
 			var lateral = -side * (lv.x * f.nx + lv.z * f.nz);
 			var bodySide = Math.abs(lateral) < 0.35 ? 'both' : (lateral > 0 ? 'left' : 'right');
 			contacts.web = { id: web.id, side: bodySide };
-			WS.logEvent(state, 'silk-contact', { webId: web.id, side: bodySide, speed: impact }, 'world');
+			WS.logEvent(state, 'silk-contact', { webId: web.id, side: bodySide, speed: impact, fly: flyId(state) }, 'world');
 			return;
 		}
 	}
@@ -225,9 +236,11 @@
 			fly.x = wc.x; fly.z = wc.z;
 			fly.snag = null;
 			fly.snagCooldown = { webId: web.id, until: state.time + 1.0, side: snag.side };
-			WS.logEvent(state, 'silk-release', { webId: web.id, held: snag.t }, 'world');
+			WS.logEvent(state, 'silk-release', { webId: web.id, held: snag.t, fly: flyId(state) }, 'world');
 		}
 	}
+
+	function flyId(state) { return state.current ? state.current.id : undefined; }
 
 	/* ---------- body step ---------- */
 

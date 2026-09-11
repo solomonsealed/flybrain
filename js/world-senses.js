@@ -9,6 +9,8 @@
  *   touch   latched contact pulses (silk, walls, the Touch tool)
  *   wind    per-antenna deflection from breeze and gusts
  *   light   local illumination per eye
+ *   social  other flies (modeled cues for courtship; they do not reach the
+ *           connectome): a male sees females, a female hears a male's song
  * No destination, fruit coordinate or area label is exported to the brain.
  */
 (function (root) {
@@ -211,6 +213,44 @@
 		return out;
 	}
 
+	/* ---------- other flies (modeled social cues) ---------- */
+
+	// A male sees females in his visual field within courtRange with a clear
+	// line of sight, and reads from their appearance and cuticular pheromones
+	// whether each is mature and whether she has recently mated (a mated
+	// female carries the male pheromone cVA). A female hears courtship song
+	// from a male singing within songRange, from any direction. `target` is
+	// the female a courting male is pursuing, if he can see her. None of this
+	// is sent to the connectome: courtship is a modeled program.
+	function socialCues(state, cfg, fly, eye) {
+		var out = { females: [], song: 0, suitor: null, target: null };
+		var me = state.current, flies = state.flies, L = root.WorldLife;
+		if (!me || !flies || flies.length < 2 || !L) return out;
+		var rc = cfg.reproduction;
+		for (var i = 0; i < flies.length; i++) {
+			var o = flies[i];
+			if (o === me) continue;
+			var dx = o.fly.x - eye.x, dz = o.fly.z - eye.z, d = Math.hypot(dx, dz);
+			if (me.sex === 'female') {
+				if (o.sex === 'male' && o.repro.singing && d < rc.songRange) {
+					var loud = 1 - d / rc.songRange;
+					if (loud > out.song) { out.song = loud; out.suitor = o.id; }
+				}
+				continue;
+			}
+			if (o.sex !== 'female' || d > rc.courtRange) continue;
+			var b = WS.bearing(fly.heading, dx, dz);
+			var w = eyeWeights(cfg.threat, b);
+			if (!(w.left > 0 || w.right > 0)) continue;
+			if (d > 1.5 && transmission(cfg, eye.x, eye.y, eye.z, o.fly.x, o.fly.y + 0.3, o.fly.z) < 0.3) continue;
+			var seen = { id: o.id, bearing: b, distance: d, mature: L.isMature(state, cfg, o), mated: L.recentlyMated(state, o),
+				busy: !!o.repro.partner, accepting: o.behavior.current === 'accept' };
+			out.females.push(seen);
+			if (o.id === me.repro.courtTarget) out.target = seen;
+		}
+		return out;
+	}
+
 	/* ---------- sample ---------- */
 
 	// Takes one sensory sample. `memory` persists between samples (odor
@@ -239,8 +279,9 @@
 		var lag = Math.min(3, hist.length - 1);
 		var odorTrend = lag > 0 && dtSince > 0 ? (odorMean - hist[hist.length - 1 - lag]) / (lag * dtSince) : 0;
 
-		// taste: only with head contact on exposed edible fruit, on the ground
-		var taste = { sugar: 0, bitter: 0, fruitId: null };
+		// taste: only with head contact on exposed edible fruit, on the ground.
+		// Fermentation (acetic acid) on a contacted fruit marks an egg-laying site.
+		var taste = { sugar: 0, bitter: 0, fruitId: null, fermentingId: null };
 		if (fly.mode === 'ground') {
 			for (var i = 0; i < state.fruits.length; i++) {
 				var fr = state.fruits[i];
@@ -249,6 +290,7 @@
 				if (Math.hypot(head.x - fr.x, head.z - fr.z) <= reach) {
 					var sugar = WS.fruitSugar(cfg, fr);
 					if (sugar > taste.sugar) { taste.sugar = sugar; taste.fruitId = fr.id; }
+					if (fr.stage === 'fermenting' && !taste.fermentingId) taste.fermentingId = fr.id;
 				}
 			}
 		}
@@ -295,7 +337,8 @@
 				gust: !!(state.env.gust && state.time < state.env.gust.until) },
 			light: { left: lightL, right: lightR, level: level },
 			temperature: state.env.temperature,
-			airborne: fly.mode === 'air'
+			airborne: fly.mode === 'air',
+			social: socialCues(state, cfg, fly, eye)
 		};
 	}
 

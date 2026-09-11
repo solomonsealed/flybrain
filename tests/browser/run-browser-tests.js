@@ -151,7 +151,46 @@ var scenarios = [
 			.then(function (p) { return page.click(p.x, p.y); })
 			.then(function () { return cdp.sleep(400); })
 			.then(function () { return page.eval('document.getElementById("wiSelection").textContent'); })
-			.then(function (txt) { assert(/The fly/.test(txt) && /Lateral horn/.test(txt), 'fly inspection shown'); return page.eval('FlyWorldApp.setPaused(false)'); });
+			.then(function (txt) { assert(/The fly|♀|♂/.test(txt) && /Lateral horn/.test(txt), 'fly inspection shown'); return page.eval('FlyWorldApp.setPaused(false)'); });
+	}],
+	['two flies: both drawn, N switches the focused fly, Touch reaches the fly clicked', function (page) {
+		return ready(page).then(function () { return page.eval('(' + function () {
+			var st = FlyWorldApp.getState();
+			return { sexes: st.flies.map(function (r) { return r.sex; }).join(','), focus: FlyWorldApp.focusId, brains: Object.keys(FlyWorldApp.sim.agents).length };
+		}.toString() + ')()'); })
+			.then(function (r) {
+				assert(r.sexes === 'female,male', 'a female and a male (' + r.sexes + ')');
+				assert(r.focus === 'fly-1' && r.brains === 2, 'focus on the female, two brains (' + r.brains + ')');
+				return page.eval('FlyWorldApp.setPaused(true); document.dispatchEvent(new KeyboardEvent("keydown", { key: "n" })); FlyWorldApp.setView("eyes"); FlyWorldApp.focusId');
+			})
+			.then(function (id) { assert(id === 'fly-2', 'N focuses the male (' + id + ')'); return cdp.sleep(500); })
+			.then(function () {
+				// the first-person camera now sits at the male's head
+				return page.eval('(function () { var c = FlyWorldApp.renderer.activeCamera().position, f = FlyWorldApp.focusRec().fly; return Math.hypot(c.x - f.x, c.z - f.z); })()');
+			})
+			.then(function (d) {
+				assert(d > 0.2 && d < 0.7, 'eyes camera at the male\'s head (d ' + d.toFixed(2) + ')');
+				return page.eval('FlyWorldApp.setView("garden"); FlyWorldApp.setTool("touch"); FlyWorldApp.renderer.resetCamera(); FlyWorldApp.renderer.zoomBy(4); (function () { var f = FlyWorldApp.getState().flies[0].fly; FlyWorldApp.renderer.controls.target.set(f.x, 0, f.z); return true; })()');
+			})
+			.then(function () { return cdp.sleep(600); })
+			.then(function () { return page.eval('(function () { var f = FlyWorldApp.getState().flies[0].fly; return FlyWorldApp.renderer.worldToScreen(f.x, 0.25, f.z); })()'); })
+			.then(function (p) { return page.click(p.x, p.y); })
+			.then(function () { return cdp.sleep(300); })
+			.then(function () { return page.eval('FlyWorldApp.getState().events.filter(function (e) { return e.type === "touch"; }).pop()'); })
+			.then(function (ev) {
+				assert(ev && ev.data.fly === 'fly-1', 'the touch reached the female (' + JSON.stringify(ev && ev.data) + ')');
+				return page.eval('FlyWorldApp.setPaused(false)');
+			});
+	}],
+	['a garden at the cap (?flies=48) keeps real time', function (page) {
+		var t0;
+		return ready(page, BASE + '?flies=48').then(function () { return page.eval('({ n: FlyWorldApp.getState().flies.length, t: FlyWorldApp.sim.state.time })'); })
+			.then(function (r) { assert(r.n === 48, '48 flies (' + r.n + ')'); t0 = r.t; return cdp.sleep(5000); })
+			.then(function () { return page.eval('({ t: FlyWorldApp.sim.state.time, p: FlyWorldApp.perfStats() })'); })
+			.then(function (r) {
+				assert(r.t - t0 > 4.0, 'advanced ' + (r.t - t0).toFixed(2) + ' s in 5 s');
+				assert(r.p.brainBatchMs < 90, 'one batch of 48 brains fits a 100 ms step (' + r.p.brainBatchMs.toFixed(1) + ' ms)');
+			});
 	}],
 	['hidden tab pauses world and brain; showing it resumes without a reset', function (page) {
 		var before;
@@ -285,6 +324,7 @@ function perfSample(browser) {
 			'FlyWorldApp.setView("closeup"); FlyWorldApp.renderer.zoomBy(4); true'); })
 		.then(function () { return one('desktop 1400x900, fly\'s eyes (first person) with the brain inset', BASE, null,
 			'FlyWorldApp.setView("eyes"); true'); })
+		.then(function () { return one('desktop 1400x900, 48 flies at the population cap (?flies=48), garden + 139K neuron view', BASE + '?flies=48'); })
 		.then(function () { return one('phone viewport 390x844 @3x (emulated on desktop)', BASE, { width: 390, height: 844, deviceScaleFactor: 3, mobile: true, touch: true }); })
 		.then(function () {
 			var os = require('os');

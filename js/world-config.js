@@ -43,7 +43,7 @@
 			{ id: 'safe-orchard', name: 'Safe orchard', x: 24, z: 26, description: 'Fig tree with fallen fruit and a clear approach.' },
 			{ id: 'risky-orchard', name: 'Risky orchard', x: 88, z: 26, description: 'Fragrant apple patch beside a web strung between low branches.' },
 			{ id: 'trellis', name: 'Trellis corner', x: 96, z: 70, description: 'A second web, turned sideways and partly hidden by vine leaves.' },
-			{ id: 'clearing', name: 'Sunny clearing', x: 60, z: 48, description: 'Open ground, a soft breeze, and bright light. The fly starts here.' },
+			{ id: 'clearing', name: 'Sunny clearing', x: 60, z: 48, description: 'Open ground, a soft breeze, and bright light. The flies start here.' },
 			{ id: 'shelter', name: 'Leaf shelter', x: 22, z: 72, description: 'Shade and leaf litter for resting.' }
 		],
 
@@ -221,7 +221,54 @@
 			groomRelief: 1.0
 		},
 
-		initialDrives: { hunger: 0.55, fear: 0.0, fatigue: 0.0, curiosity: 0.5, groom: 0.1 },
+		// egg: a gravid female's modeled urge to lay (see reproduction)
+		initialDrives: { hunger: 0.55, fear: 0.0, fatigue: 0.0, curiosity: 0.5, groom: 0.1, egg: 0.0 },
+
+		// Population. Every individual counts toward the cap at every stage
+		// (egg, larva, pupa, adult), so each egg laid has room to become an
+		// adult. Each adult runs its own copy of the connectome; 48 brains fit
+		// one worker thread in real time on the reference desktop (about 1 ms
+		// of worker time per brain per 100 ms step).
+		population: {
+			max: 48,
+			// the default garden (scenario "free"): a female and a male in the clearing
+			founders: [
+				{ sex: 'female', x: 60, z: 48, heading: Math.PI * 0.5 },
+				{ sex: 'male', x: 63.5, z: 51, heading: Math.PI * 0.8 }
+			],
+			// ?flies=N (stress and performance runs): N founders, alternating
+			// female and male, scattered around the clearing
+			scatter: { x: 60, z: 48, radius: 14 }
+		},
+
+		// Life cycle, compressed about 9,000-fold (roughly 13 s of garden time
+		// per fly day): at 25 C a real egg hatches in a day, the larva feeds for
+		// about 4 days and the pupa takes about 4 more.
+		lifecycle: {
+			eggDuration: 15,
+			larvaDuration: 55,
+			pupaDuration: 60,           // the adult brain settles during the last cfg.brain.settleSteps of it
+			maturation: { female: 20, male: 8 },   // s after emerging before courting or accepting a male
+			pupaWander: 1.2             // BL a feeding larva moves away from its fruit before pupating
+		},
+
+		// Courtship, mating and egg-laying: modeled programs (docs/world-model.md).
+		// FlyWire's brain is female; both sexes run it, and the male courtship
+		// circuit (P1 and its partners) is not in it.
+		reproduction: {
+			offspringPerMating: 1,      // deliberately unrealistic: a real female lays dozens of eggs a day
+			courtRange: 12,             // BL within which a male notices a female he can see
+			followDistance: 0.55,       // BL from his head to her body centre: close enough to tap her abdomen
+			songRange: 3.0,             // BL within which his wing song is heard, and at which he sings
+			courtMaxDuration: 14,       // s a male courts without success before giving up
+			mountRange: 1.15,           // BL between bodies at which an accepting female is mounted
+			copulationDuration: 12,     // s; lengthened from the real ~20 min (~2 s at this compression) so it can be seen
+			femaleRefractory: 90,       // s after mating before she accepts again (real: about a week)
+			maleRefractory: 20,         // s after mating before he courts again
+			ovipositDuration: 2.5,      // s with the ovipositor on fermenting fruit
+			eggDriveRate: 0.02,         // per s: a gravid female's urge to lay rises until she lays
+			layAnyFruitUrge: 0.6        // egg urge (after ~30 s of carrying) above which ripe, unfermented fruit will do too
+		},
 
 		clock: {
 			bodyDt: 1 / 60,
@@ -251,8 +298,9 @@
 		},
 
 		policy: {
-			minDuration: { idle: 0, walk: 0.4, feed: 1.2, groom: 1.5, rest: 3.0, startle: 0.5, fly: 1.2, brace: 0.5, snagged: 0 },
-			cooldown: { startle: 3.0, fly: 6.0, groom: 3.0, feed: 0.6, brace: 1.0 }
+			minDuration: { idle: 0, walk: 0.4, feed: 1.2, groom: 1.5, rest: 3.0, startle: 0.5, fly: 1.2, brace: 0.5, snagged: 0,
+				court: 0, accept: 0.5, copulate: 0, oviposit: 0 },
+			cooldown: { startle: 3.0, fly: 6.0, groom: 3.0, feed: 0.6, brace: 1.0, court: 8.0, oviposit: 6.0 }
 		},
 
 		render: {
@@ -268,7 +316,12 @@
 		scenarios: {
 			free: {
 				label: 'Free garden',
-				description: 'The authored garden: fig, apple and plum fruit, two webs, the fly in the clearing.',
+				description: 'The authored garden: fig, apple and plum fruit, two webs, and a female and a male fly in the clearing. They court, mate and lay eggs on fermenting fruit, up to 48 flies.',
+				stateOptions: { founders: 'pair' }
+			},
+			single: {
+				label: 'One fly',
+				description: 'The authored garden with a single female, as in the documented experiments. No courtship or eggs.',
 				stateOptions: {}
 			},
 			hungry: {

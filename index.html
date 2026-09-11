@@ -4,21 +4,21 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>FlyBrain</title>
-    <link rel="stylesheet" type="text/css" href="./css/main.css?v=19">
+    <link rel="stylesheet" type="text/css" href="./css/main.css?v=20">
 </head>
 
 <body>
     <div id="toolbar">
         <div class="toolbar-left">
             <button class="tool-btn sidebar-toggle" id="sidebarToggle" aria-label="Toggle panel">&#9776;</button>
-            <button class="tool-btn" data-tool="observe" title="Click a fruit, web or the fly to inspect it (O)">Observe</button>
+            <button class="tool-btn" data-tool="observe" title="Click a fruit, web, fly or its young to inspect it; clicking a fly also follows it (O)">Observe</button>
             <button class="tool-btn active" data-tool="fruit" title="Click the ground to place fruit">Fruit</button>
             <button class="tool-btn" data-tool="web" title="Click the ground to place a web; click a web to remove it">Web</button>
-            <button class="tool-btn" data-tool="touch" title="Click the fly to touch it">Touch</button>
+            <button class="tool-btn" data-tool="touch" title="Click a fly to touch it">Touch</button>
             <button class="tool-btn" data-tool="air" title="Drag to blow a gust of air">Air</button>
             <button class="tool-btn" data-tool="light" id="lightBtn">Light: Bright</button>
             <button class="tool-btn" data-tool="temp" id="tempBtn">Temp: Neutral</button>
-            <button class="tool-btn" id="followBtn" aria-pressed="false" title="Follow the fly (F)">Follow</button>
+            <button class="tool-btn" id="followBtn" aria-pressed="false" title="Follow the focused fly (F); N switches fly">Follow</button>
             <button class="tool-btn" id="pauseBtn" aria-pressed="false" title="Pause world and brain together (Space)">Pause</button>
             <button class="tool-btn" id="resetBtn" title="Start a new run from the seed">Reset</button>
             <button class="tool-btn" id="inspectorBtn" aria-pressed="false" title="Traces, events and experiments (I)">Inspect</button>
@@ -48,14 +48,15 @@
             <span>Interaction Guide</span>
             <button class="help-close-btn" id="helpCloseBtn">&times;</button>
         </div>
-        <div class="help-item"><strong>The garden</strong> -- A walled orchard seen from the south. Fruit trees drop ripe fruit; two spiderwebs hang on tempting routes. The fly only knows what it smells, sees, tastes and touches.</div>
+        <div class="help-item"><strong>The garden</strong> -- A walled orchard seen from the south. Fruit trees drop ripe fruit; two spiderwebs hang on tempting routes. Each fly only knows what it smells, sees, tastes and touches.</div>
+        <div class="help-item"><strong>Flies</strong> -- A female (pink ring) and a male (blue ring, smaller, dark abdomen tip) share the garden, each with its own copy of the connectome. He courts her; if she accepts they mate, and she lays one egg on fermenting fruit. It hatches into a larva, pupates beside the fruit and emerges as a new adult. Up to 48 flies, counting eggs, larvae and pupae. Courtship and egg-laying are modeled: FlyWire's brain is female and has no male courtship circuit. Observe-click a fly, or press N, to follow it.</div>
         <div class="help-item"><strong>Camera</strong> -- Drag to pan, scroll or pinch to zoom, right-drag or two-finger twist to orbit. F follows the fly, R resets the view. The camera never moves anything in the garden.</div>
         <div class="help-item"><strong>Views</strong> -- Close-up (C) orbits the fly: drag to circle it, scroll in to its brain. Fly's eyes (E) is first person from its head: drag to look around, scroll to widen the view; the inset shows its brain. Esc returns to the garden.</div>
         <div class="help-item"><strong>X-ray</strong> -- The fly is glass, with all 139,255 neurons at their FlyWire positions inside its head. A neuron flashes when it fires: blue sensory, purple central, red motor. X toggles it.</div>
-        <div class="help-item"><strong>Observe</strong> -- Click a fruit, web or the fly to see ripeness, remaining food, how visible a web is, or what the fly is sensing.</div>
+        <div class="help-item"><strong>Observe</strong> -- Click a fruit, web, fly, egg, larva or pupa to see ripeness, remaining food, how visible a web is, what a fly is sensing, or when the young will develop. Clicking a fly also makes the views follow it.</div>
         <div class="help-item"><strong>Fruit</strong> -- Click the ground to drop a ripe fruit. A hungry fly follows its smell; only eating reduces hunger.</div>
         <div class="help-item"><strong>Web</strong> -- Click the ground to hang a web facing the fly; click a web to take it down. Webs scare the fly by how large, near and fast-approaching they look.</div>
-        <div class="help-item"><strong>Touch / Air</strong> -- Click the fly to touch it (head, thorax, abdomen or leg). Drag anywhere to blow a gust; the arrow shows its direction.</div>
+        <div class="help-item"><strong>Touch / Air</strong> -- Click a fly to touch it (head, thorax, abdomen or leg). Drag anywhere to blow a gust; the arrow shows its direction.</div>
         <div class="help-item"><strong>Light / Temp</strong> -- Dim or darken the garden, or warm and cool it.</div>
         <div class="help-item"><strong>Inspect</strong> -- Live traces of senses, neural activity and motor output, an event timeline, and repeatable experiments with seeds.</div>
     </div>
@@ -70,6 +71,10 @@
             <div id="neuronTooltip" class="neuron-tooltip"></div>
         </div>
         <div id="drive-meters">
+            <div class="drive-row">
+                <span class="drive-label" title="The fly the views, X-ray brain and these meters follow. Observe-click a fly or press N to switch.">Fly</span>
+                <span id="focusFly" class="behavior-state">&ndash;</span>
+            </div>
             <div class="drive-row">
                 <span class="drive-label">State</span>
                 <span id="behaviorState" class="behavior-state">idle</span>
@@ -93,6 +98,10 @@
             <div class="drive-row">
                 <span class="drive-label">Groom</span>
                 <div class="drive-bar-bg"><div class="drive-bar" id="driveGroom"></div></div>
+            </div>
+            <div class="drive-row">
+                <span class="drive-label" title="Flies at every stage count toward the cap of 48">Flies</span>
+                <span id="populationLine" class="sim-clock">&ndash;</span>
             </div>
             <div class="drive-row sim-clock-row">
                 <span class="drive-label">Time</span>
@@ -221,29 +230,30 @@
     <!-- Three.js v0.128.0 (vendored) -- do NOT upgrade one without the other -->
     <script src="./js/vendor/three.min.js"></script>
     <script src="./js/vendor/OrbitControls.js"></script>
-    <script type="text/javascript" src="./js/constants.js?v=19"></script>
-    <script type="text/javascript" src="./js/connectome.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-config.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-state.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-physics.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-senses.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-brain-adapter.js?v=19"></script>
-    <script type="text/javascript" src="./js/simulation-clock.js?v=19"></script>
-    <script type="text/javascript" src="./js/brain-worker-bridge.js?v=19"></script>
-    <script type="text/javascript" src="./js/neuro-renderer.js?v=19"></script>
-    <script type="text/javascript" src="./js/fly-logic.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-sim.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-renderer.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-renderer-2d.js?v=19"></script>
-    <script type="text/javascript" src="./js/world-inspector.js?v=19"></script>
-    <script type="text/javascript" src="./js/brain3d.js?v=19"></script>
-    <script type="text/javascript" src="./js/education.js?v=19"></script>
-    <script type="text/javascript" src="./js/main.js?v=19"></script>
-    <script type="text/javascript" src="./js/caretaker-renderer.js?v=19"></script>
-    <script type="text/javascript" src="./js/caretaker-sidebar.js?v=19"></script>
-    <script type="text/javascript" src="./js/caretaker-analytics.js?v=19"></script>
-    <script type="text/javascript" src="./js/caretaker-calendar.js?v=19"></script>
-    <script type="text/javascript" src="./js/caretaker-bridge.js?v=19"></script>
+    <script type="text/javascript" src="./js/constants.js?v=20"></script>
+    <script type="text/javascript" src="./js/connectome.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-config.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-state.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-physics.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-senses.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-life.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-brain-adapter.js?v=20"></script>
+    <script type="text/javascript" src="./js/simulation-clock.js?v=20"></script>
+    <script type="text/javascript" src="./js/brain-worker-bridge.js?v=20"></script>
+    <script type="text/javascript" src="./js/neuro-renderer.js?v=20"></script>
+    <script type="text/javascript" src="./js/fly-logic.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-sim.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-renderer.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-renderer-2d.js?v=20"></script>
+    <script type="text/javascript" src="./js/world-inspector.js?v=20"></script>
+    <script type="text/javascript" src="./js/brain3d.js?v=20"></script>
+    <script type="text/javascript" src="./js/education.js?v=20"></script>
+    <script type="text/javascript" src="./js/main.js?v=20"></script>
+    <script type="text/javascript" src="./js/caretaker-renderer.js?v=20"></script>
+    <script type="text/javascript" src="./js/caretaker-sidebar.js?v=20"></script>
+    <script type="text/javascript" src="./js/caretaker-analytics.js?v=20"></script>
+    <script type="text/javascript" src="./js/caretaker-calendar.js?v=20"></script>
+    <script type="text/javascript" src="./js/caretaker-bridge.js?v=20"></script>
 </body>
 
 </html>

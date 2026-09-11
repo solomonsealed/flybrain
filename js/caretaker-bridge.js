@@ -31,9 +31,11 @@
     return b === 'snagged' ? 'startle' : b;
   }
 
+  // The single-fly fields (drives, behavior, position) describe the focused
+  // fly; `flies` lists every adult and `population` counts every stage.
   function getState() {
     var a = app();
-    var st = a.getState(), cfg = a.config, fly = st.fly;
+    var st = a.getState(), cfg = a.config, rec = a.focusRec(), fly = rec.fly;
     var scr = a.worldToScreen(fly.x, fly.y, fly.z) || { x: 0, y: 0 };
     var food = [];
     var canopy = 0;
@@ -45,18 +47,24 @@
       food.push({ id: f.id, x: f.x, z: f.z, species: f.species, stage: f.stage,
         remaining: f.amount, eaten: 1 - f.amount, radius: f.radius, source: f.source, screen: { x: fs.x, y: fs.y } });
     }
-    var enterAgo = st.time - st.behavior.enterTime;
+    var enterAgo = st.time - rec.behavior.enterTime;
     return {
       coordinateVersion: cfg.coordinateVersion,
       world: { bounds: cfg.bounds, units: 'body_lengths', axes: 'x east, z south, altitude up; heading 0 = east, counter-clockwise seen from above' },
       simTime: st.time,
       brain: { kind: a.brain.kind, steering: a.run.mode },
-      drives: { hunger: st.drives.hunger, fear: st.drives.fear, fatigue: st.drives.fatigue,
-        curiosity: st.drives.curiosity, groom: st.drives.groom },
-      behavior: { current: legacyBehaviorName(st.behavior.current), state: st.behavior.current,
-        enterTime: Date.now() - enterAgo * 1000, simEnterTime: st.behavior.enterTime, groomLocation: st.behavior.groomLocation },
+      fly: { id: rec.id, sex: rec.sex },
+      drives: { hunger: rec.drives.hunger, fear: rec.drives.fear, fatigue: rec.drives.fatigue,
+        curiosity: rec.drives.curiosity, groom: rec.drives.groom },
+      behavior: { current: legacyBehaviorName(rec.behavior.current), state: rec.behavior.current,
+        enterTime: Date.now() - enterAgo * 1000, simEnterTime: rec.behavior.enterTime, groomLocation: rec.behavior.groomLocation },
       position: { x: fly.x, z: fly.z, altitude: fly.y, heading: fly.heading, facingDir: fly.heading, speed: fly.speed,
         screen: { x: scr.x, y: scr.y } },
+      flies: st.flies.map(function (r) {
+        return { id: r.id, sex: r.sex, x: r.fly.x, z: r.fly.z, behavior: r.behavior.current, hunger: r.drives.hunger,
+          matings: r.repro.matings, carryingEggs: r.repro.eggs };
+      }),
+      population: WorldLife.census(st),
       firingStats: { firedNeurons: BRAIN.workerFiredNeurons || 0 },
       food: food,
       canopyFruit: canopy,
@@ -111,8 +119,10 @@
         else result = { ok: false, error: 'set_temp: unknown level' };
         break;
       case 'touch':
-        result = a.command({ type: 'touch', params: { location: params.location || 'thorax', side: params.side || 'both' }, source: 'caretaker' });
-        at = { x: a.getState().fly.x, z: a.getState().fly.z };
+        // params.fly: a fly id (default: the focused fly)
+        var touched = (params.fly && WorldState.findFly(a.getState(), params.fly)) || a.focusRec();
+        result = a.command({ type: 'touch', params: { fly: touched.id, location: params.location || 'thorax', side: params.side || 'both' }, source: 'caretaker' });
+        at = { x: touched.fly.x, z: touched.fly.z };
         break;
       case 'blow_wind':
         // direction in degrees, world frame: 0 = toward east (+x), 90 = toward south (+z)
@@ -120,7 +130,7 @@
         var rad = deg * Math.PI / 180;
         result = a.command({ type: 'wind', params: { dirX: Math.cos(rad), dirZ: Math.sin(rad),
           strength: Math.min(1, Math.max(0, params.strength === undefined ? 0.5 : params.strength)), duration: 2 }, source: 'caretaker' });
-        at = { x: a.getState().fly.x, z: a.getState().fly.z };
+        at = { x: a.focusRec().fly.x, z: a.focusRec().fly.z };
         break;
       case 'clear_food':
         result = a.command({ type: 'clearFruit', source: 'caretaker' });

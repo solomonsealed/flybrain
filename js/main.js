@@ -280,7 +280,8 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		backend: null,
 		assets: null,
 		brain: { kind: 'loading', label: 'Loading brain' },
-		run: { scenario: 'free', seed: 1, mode: 'hybrid' },
+		run: { scenario: 'free', seed: 1, mode: 'hybrid', founders: null },
+		focusId: null,        // the fly the views, X-ray brain, meters and trace follow
 		userPaused: false,
 		hiddenPaused: false,
 		stepLatency: 0,
@@ -289,12 +290,14 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	};
 
 	// URL options (shareable, reproducible runs): ?seed=3&scenario=webPatch
-	// &mode=connectome, plus ?renderer=2d and ?brain=legacy capability checks.
+	// &mode=connectome, ?flies=N (N founders, up to the population cap),
+	// plus ?renderer=2d and ?brain=legacy capability checks.
 	var params = {};
 	location.search.replace(/[?&]([^=&]+)=([^&]*)/g, function (m, k, v) { params[k] = decodeURIComponent(v); });
 	if (params.seed && parseInt(params.seed, 10) > 0) app.run.seed = parseInt(params.seed, 10);
 	if (params.scenario && cfg.scenarios[params.scenario]) app.run.scenario = params.scenario;
 	if (params.mode === 'connectome' || params.mode === 'hybrid') app.run.mode = params.mode;
+	if (parseInt(params.flies, 10) > 0) app.run.founders = Math.min(cfg.population.max, parseInt(params.flies, 10));
 	app.forceCanvas2D = params.renderer === '2d';
 	app.params = params;
 
@@ -309,12 +312,39 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	/* ---------- initial world (drawn while the connectome loads) ---------- */
 
 	function scenarioOpts(run) {
-		return FlyWorldSim.scenarioOptions(cfg, run.scenario);
+		return FlyWorldSim.scenarioOptions(cfg, run.scenario, run.founders ? { founders: run.founders === 1 ? 'single' : run.founders } : null);
 	}
 
 	app.state = WorldState.create(cfg, app.run.seed, scenarioOpts(app.run).stateOptions);
 
 	function currentState() { return app.sim ? app.sim.state : app.state; }
+
+	// The focused fly's record (default: the first adult).
+	function focusRec() {
+		var st = currentState();
+		return (app.focusId && WorldState.findFly(st, app.focusId)) || st.flies[0];
+	}
+	function focusPose() {
+		var rec = focusRec();
+		return app.sim ? app.sim.renderPose(rec) : rec.fly;
+	}
+	app.focusRec = focusRec;
+
+	// Focus a fly: the camera, close views, X-ray brain, drive meters, trace
+	// and Touch tool follow it. Display only: the run never depends on it.
+	app.focus = function (id) {
+		var st = currentState();
+		var rec = id ? WorldState.findFly(st, id) : null;
+		if (!rec) return false;
+		app.focusId = rec.id;
+		if (app.sim) app.sim.setFocus(rec.id);
+		updateDriveMeters();
+		return true;
+	};
+	app.focusNext = function (dir) {
+		var flies = currentState().flies, i = flies.indexOf(focusRec());
+		return app.focus(flies[(i + (dir || 1) + flies.length) % flies.length].id);
+	};
 
 	/* ---------- renderers ---------- */
 
@@ -390,16 +420,20 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		}
 	}
 
+	// Round-trip time of a neural step (a batch holds every fly's brain).
 	function wrapBackendTiming(backend) {
-		var step = backend.step;
-		backend.step = function (req, cb) {
-			var t0 = performance.now();
-			step(req, function (res) {
-				var dt = performance.now() - t0;
-				app.stepLatency = app.stepLatency ? app.stepLatency + (dt - app.stepLatency) * 0.1 : dt;
-				cb(res);
-			});
-		};
+		function timed(fn) {
+			return function (req, cb) {
+				var t0 = performance.now();
+				fn(req, function (res) {
+					var dt = performance.now() - t0;
+					app.stepLatency = app.stepLatency ? app.stepLatency + (dt - app.stepLatency) * 0.1 : dt;
+					cb(res);
+				});
+			};
+		}
+		backend.step = timed(backend.step);
+		if (backend.stepAll) backend.stepAll = timed(backend.stepAll);
 		return backend;
 	}
 
@@ -485,6 +519,8 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		});
 		app.sim = sim;
 		app.replayStatus = '';
+		if (!WorldState.findFly(sim.state, app.focusId)) app.focusId = sim.state.flies[0].id;
+		sim.setFocus(app.focusId);
 		sim.onNeural(onNeuralStep);
 		sim.onEvents(function (evs) { if (inspector) inspector.onEvents(evs); handleEventsForUi(evs); });
 		if (inspector) {
@@ -542,6 +578,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		var original = log.finalFingerprint;
 		app.replayStatus = 'Replaying ' + (target * cfg.clock.bodyDt).toFixed(1) + ' s from a reset brain…';
 		var sim = FlyWorldSim.replay(log, app.backend, { config: cfg, wantFireState: wantFireState });
+		sim.setFocus(app.focusId);
 		sim.onNeural(onNeuralStep);
 		sim.clock.setSpeed(4);
 		app.sim = sim;
@@ -593,21 +630,23 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 
 	/* ---------- neural step -> UI ---------- */
 
+	// The neuron panel and Brain 3D show the focused fly's brain.
 	var lastDotUpdate = 0;
-	function onNeuralStep(rec) {
+	function onNeuralStep() {
 		var sim = app.sim;
 		if (!sim) return;
+		var fr = focusRec(), ag = sim.agent(fr.id);
 		// keep BRAIN.drives current for panels that read it
-		for (var k in sim.state.drives) BRAIN.drives[k] = sim.state.drives[k];
+		for (var k in fr.drives) BRAIN.drives[k] = fr.drives[k];
 		BRAIN.stimulate.lightLevel = sim.state.env.lightLevel;
 		BRAIN.stimulate.temperature = sim.state.env.temperature;
-		if (sim.lastResult && sim.lastResult.groupSpikeCounts) {
-			var m = sim.motorOut || {};
-			var fl = sim.state.fly.mode === 'air' ? 1 : 0;
+		if (ag && ag.lastResult && ag.lastResult.groupSpikeCounts) {
+			var m = ag.motorOut || {};
+			var fl = fr.fly.mode === 'air' ? 1 : 0;
 			var legL = (m.walkDrive || 0) * (1 - Math.min(0.5, Math.max(0, m.turn || 0) * 0.1));
 			var legR = (m.walkDrive || 0) * (1 - Math.min(0.5, Math.max(0, -(m.turn || 0)) * 0.1));
-			BRAIN.workerBridge.displayWorldStep(sim.lastResult, {
-				DRIVE_FEAR: sim.state.drives.fear, DRIVE_CURIOSITY: sim.state.drives.curiosity, DRIVE_GROOM: sim.state.drives.groom,
+			BRAIN.workerBridge.displayWorldStep(ag.lastResult, {
+				DRIVE_FEAR: fr.drives.fear, DRIVE_CURIOSITY: fr.drives.curiosity, DRIVE_GROOM: fr.drives.groom,
 				MN_LEG_L1: legL, MN_LEG_L2: legL, MN_LEG_L3: legL, MN_LEG_R1: legR, MN_LEG_R2: legR, MN_LEG_R3: legR,
 				MN_WING_L: fl, MN_WING_R: fl, DN_STARTLE: m.escape || 0
 			});
@@ -621,15 +660,26 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	}
 
 	function updateDriveMeters() {
-		var d = currentState().drives;
+		var st = currentState(), fr = focusRec(), d = fr.drives;
 		var set = function (id, v) { var el = document.getElementById(id); if (el) el.style.width = (v * 100) + '%'; };
 		set('driveHunger', d.hunger); set('driveFear', d.fear); set('driveFatigue', d.fatigue);
 		set('driveCuriosity', d.curiosity); set('driveGroom', d.groom);
 		var be = document.getElementById('behaviorState');
-		if (be) be.textContent = currentState().behavior.current;
+		if (be) be.textContent = fr.behavior.current;
+		var fl = document.getElementById('focusFly');
+		if (fl) fl.textContent = flyName(fr) + (fr.repro.eggs > 0 ? ' · carrying an egg' : '');
+		var pop = document.getElementById('populationLine');
+		if (pop) {
+			var c = WorldLife.census(st);
+			pop.textContent = c.females + '♀ ' + c.males + '♂' + (c.eggs + c.larvae + c.pupae ? ' · ' + c.eggs + ' egg' + (c.eggs === 1 ? '' : 's') + ', ' +
+				c.larvae + ' larva' + (c.larvae === 1 ? '' : 'e') + ', ' + c.pupae + ' pupa' + (c.pupae === 1 ? '' : 'e') : '') + ' · ' + c.total + '/' + cfg.population.max;
+		}
 		var clk = document.getElementById('simClock');
-		if (clk) clk.textContent = currentState().time.toFixed(1) + ' s' + (app.sim && app.sim.clock.paused ? ' (paused)' : '');
+		if (clk) clk.textContent = st.time.toFixed(1) + ' s' + (app.sim && app.sim.clock.paused ? ' (paused)' : '');
 	}
+
+	function flyName(rec) { return (rec.sex === 'male' ? '♂ ' : '♀ ') + rec.id.replace('fly-', 'fly '); }
+	app.flyName = flyName;
 
 	function updateGroupDots() {
 		if (typeof NeuroRenderer !== 'undefined' && NeuroRenderer.isActive()) return;
@@ -654,11 +704,22 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	}
 
 	function handleEventsForUi(evs) {
+		var st = currentState();
 		for (var i = 0; i < evs.length; i++) {
 			var e = evs[i];
 			if (e.type === 'fruit-placed' || e.type === 'web-placed' || e.type === 'touch') {
-				var p = e.type === 'touch' ? currentState().fly : e.data;
-				addRipple(p.x, p.z, e.source === 'caretaker' ? 'caretaker' : 'user');
+				var touched = e.type === 'touch' ? WorldState.findFly(st, e.data.fly) : null;
+				var p = touched ? touched.fly : e.data;
+				if (p && isFinite(p.x)) addRipple(p.x, p.z, e.source === 'caretaker' ? 'caretaker' : 'user');
+			} else if (e.type === 'eclosed') {
+				var born = WorldState.findFly(st, e.data.fly);
+				if (born) {
+					addRipple(born.fly.x, born.fly.z, 'birth');
+					flash('A new ' + born.sex + ' emerged from ' + (born.sex === 'male' ? 'his' : 'her') + ' pupa (' + born.id.replace('fly-', 'fly ') + ')');
+				}
+			} else if (e.type === 'egg-laid') {
+				var eg = WorldState.findById(st.brood, e.data.egg);
+				if (eg) addRipple(eg.x, eg.z, 'birth');
 			}
 		}
 	}
@@ -743,7 +804,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		var quick = performance.now() - pointer.t < 600;
 		if (windDrag) {
 			var end = app.renderer.screenToGround(e.clientX, e.clientY);
-			var fly = currentState().fly;
+			var fly = focusRec().fly;
 			var dx, dz, strength;
 			if (end && moved > 8) {
 				dx = end.x - windDrag.start.x; dz = end.z - windDrag.start.z;
@@ -768,7 +829,9 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		var st = currentState();
 		switch (activeTool) {
 		case 'observe':
-			var sel = pick.type === 'fruit' || pick.type === 'web' || pick.type === 'fly' ? { type: pick.type, id: pick.id } : null;
+			var sel = pick.type === 'fruit' || pick.type === 'web' || pick.type === 'fly' || pick.type === 'brood' ? { type: pick.type, id: pick.id } : null;
+			// observing a fly also focuses it
+			if (sel && sel.type === 'fly') { if (!sel.id) sel.id = focusRec().id; app.focus(sel.id); }
 			app.renderer.select(sel);
 			if (inspector) inspector.select(sel);
 			break;
@@ -785,13 +848,15 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			}
 			break;
 		case 'touch':
-			var fly = st.fly;
+			// the clicked fly, else the one nearest the click
+			var target = (pick.type === 'fly' && pick.id && WorldState.findFly(st, pick.id)) || WorldState.nearestFly(st, pick.x, pick.z);
+			var fly = target.fly;
 			var dx = pick.x - fly.x, dz = pick.z - fly.z;
-			if (pick.type !== 'fly' && Math.hypot(dx, dz) > 1.6) { flash('Click on the fly to touch it'); break; }
+			if (pick.type !== 'fly' && Math.hypot(dx, dz) > 1.6) { flash('Click on a fly to touch it'); break; }
 			var f = WorldState.forward(fly.heading), l = WorldState.left(fly.heading);
 			var along = dx * f.x + dz * f.z, side = dx * l.x + dz * l.z;
 			var location = Math.abs(side) > 0.25 && along > -0.3 && along < 0.25 ? 'leg' : along > 0.22 ? 'head' : along > -0.05 ? 'thorax' : 'abdomen';
-			app.command({ type: 'touch', params: { location: location, side: Math.abs(side) < 0.12 ? 'both' : (side > 0 ? 'left' : 'right') } });
+			app.command({ type: 'touch', params: { fly: target.id, location: location, side: Math.abs(side) < 0.12 ? 'both' : (side > 0 ? 'left' : 'right') } });
 			break;
 		}
 	}
@@ -823,7 +888,8 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			var r = ripples[i], age = (now - r.t0) / 600;
 			if (age > 1) { ripples.splice(i, 1); continue; }
 			var p = app.renderer.worldToScreen(r.x, 0.2, r.z);
-			octx.strokeStyle = r.kind === 'caretaker' ? 'rgba(227,115,75,' + (1 - age).toFixed(2) + ')' : 'rgba(255,255,255,' + (0.8 * (1 - age)).toFixed(2) + ')';
+			octx.strokeStyle = r.kind === 'caretaker' ? 'rgba(227,115,75,' + (1 - age).toFixed(2) + ')' :
+				r.kind === 'birth' ? 'rgba(255,194,214,' + (0.9 * (1 - age)).toFixed(2) + ')' : 'rgba(255,255,255,' + (0.8 * (1 - age)).toFixed(2) + ')';
 			octx.lineWidth = 2 * (1 - age);
 			octx.beginPath(); octx.arc(p.x - overlayOffset.x, p.y - overlayOffset.y, 6 + age * 26, 0, Math.PI * 2); octx.stroke();
 		}
@@ -902,10 +968,11 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			if (show) L.el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px) translate(-50%, -50%)';
 		}
 		if (flyLabel) {
-			// close-up sits right beside the fly, so its tag goes a little lower
+			// the focused fly's tag; close-up sits right beside the fly, so it goes a little lower
 			var fp = app.renderer.worldToScreen(pose.x, pose.y + (view === 'closeup' ? 0.6 : 1.2), pose.z);
-			var b = currentState().behavior.current;
-			flyLabel.textContent = b === 'walk' || view === 'eyes' ? '' : b;
+			var fr = focusRec(), b = fr.behavior.current;
+			var several = currentState().flies.length > 1;
+			flyLabel.textContent = view === 'eyes' ? '' : (several ? flyName(fr) + (b === 'walk' ? '' : ' · ') : '') + (b === 'walk' ? '' : b);
 			flyLabel.style.display = flyLabel.textContent && fp.visible ? '' : 'none';
 			flyLabel.style.transform = 'translate(' + Math.round(fp.x) + 'px,' + Math.round(fp.y) + 'px) translate(-50%, -140%)';
 		}
@@ -927,6 +994,9 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			frames: n, frameMsP50: q(0.5), frameMsP95: q(0.95), frameMsP99: q(0.99), fpsP50: n ? 1000 / q(0.5) : null,
 			drawCalls: r.calls, triangles: r.triangles, geometries: r.geometries, textures: r.textures,
 			brainStepMs: app.sim && app.sim.lastResult ? app.sim.lastResult.computeMs : null,
+			// every brain's step: the worker time of one neural batch
+			brainBatchMs: app.sim ? Object.keys(app.sim.agents).reduce(function (t, id) { var r = app.sim.agents[id].lastResult; return t + (r && r.computeMs || 0); }, 0) : null,
+			flies: app.sim ? app.sim.state.flies.length : null,
 			roundTripMs: app.stepLatency, simWallRatio: app.sim ? app.sim.clock.stats.ratio : null,
 			stalls: app.sim ? app.sim.clock.stats.stallEvents : null,
 			jsHeapMB: performance.memory ? performance.memory.usedJSHeapSize / 1048576 : null,
@@ -944,10 +1014,15 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			checkReplay();
 		}
 		var st = currentState();
-		var pose = sim ? sim.renderPose() : st.fly;
+		var fr = focusRec(), pose = focusPose();
 		var obscured = typeof Brain3D !== 'undefined' && Brain3D.active;
 		if (app.renderer) {
-			app.renderer.sync(st, pose, sim ? { senses: sim.lastSenses, motor: sim.motorOut, fire: sim.lastResult && sim.lastResult.fireState } : null);
+			var ag = sim ? sim.agent(fr.id) : null;
+			app.renderer.sync(st, pose, {
+				focusId: fr.id,
+				poseOf: sim ? sim.renderPose : function (rec) { return rec.fly; },
+				senses: ag && ag.lastSenses, motor: ag && ag.motorOut, fire: ag && ag.lastResult && ag.lastResult.fireState
+			});
 			app.renderer.suspend(obscured);
 			app.renderer.render();
 			drawOverlay();
@@ -1064,6 +1139,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		else if (e.key === 'c' || e.key === 'C') setView(currentView() === 'closeup' ? 'garden' : 'closeup');
 		else if (e.key === 'e' || e.key === 'E') setView(currentView() === 'eyes' ? 'garden' : 'eyes');
 		else if (e.key === 'x' || e.key === 'X') setXray(!xrayOn);
+		else if (e.key === 'n' || e.key === 'N') app.focusNext(e.key === 'N' ? -1 : 1);
 		else if (e.key === 'Escape' && currentView() !== 'garden') setView('garden');
 		else if (e.key === ' ' && tag !== 'BUTTON') { e.preventDefault(); setPaused(!app.userPaused); }
 		else if (e.key === 'i' || e.key === 'I') { if (inspector) inspector.toggle(); }
