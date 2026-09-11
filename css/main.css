@@ -1995,6 +1995,33 @@ body[data-tool="air"] #world-canvas { cursor: move; }
 }
 .overlay-btn.active { color: #5b9cf6; border-color: #5b9cf6; background: rgba(91, 156, 246, 0.15); }
 
+/* Camera views: garden overview, close-up orbit, first person */
+.view-modes {
+    position: fixed;
+    right: 12px;
+    bottom: calc(50% + 46px);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 18;
+}
+.view-btn {
+    min-width: 58px;
+    padding: 0.3rem 0.4rem;
+    background: var(--surface-alpha);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    border-radius: var(--radius);
+    font: 600 0.66rem system-ui, -apple-system, sans-serif;
+    cursor: pointer;
+}
+.view-btn:hover { color: var(--text); border-color: var(--text-muted); }
+.view-btn.active { color: #fbbf24; border-color: rgba(251, 191, 36, 0.7); background: rgba(251, 191, 36, 0.14); }
+body[data-view="closeup"] #world-canvas,
+body[data-view="eyes"] #world-canvas { cursor: grab; }
+body[data-view="closeup"] #world-canvas:active,
+body[data-view="eyes"] #world-canvas:active { cursor: grabbing; }
+
 .sim-clock { font: 0.62rem ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted); }
 
 /* --- Garden inspector --- */
@@ -2057,6 +2084,7 @@ body[data-tool="air"] #world-canvas { cursor: move; }
     .world-inspector { left: 0; right: 0; width: auto; top: calc(36px + env(safe-area-inset-top, 0px)); max-height: calc(100vh - 36px - 120px); border-radius: 0; }
     .overlay-toggles { top: auto; bottom: 132px; right: 8px; flex-direction: row; }
     .zoom-controls { top: auto; bottom: 170px; transform: none; right: 8px; }
+    .view-modes { bottom: 250px; right: 8px; }
     .brain-mode-badge { font-size: 0.6rem; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; }
     .toolbar-title { display: none; }
     .area-label { font-size: 0.62rem; }

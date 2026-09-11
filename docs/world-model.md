@@ -17,8 +17,9 @@ Serve the repository over HTTP (the connectome is loaded with XHR and a Web Work
 | Light, Temp | Bright / dim / dark; neutral / warm / cool |
 | Follow, Pause, Reset | Follow camera; pause world and brain together; new run from the seed |
 | Inspect | Live trace, event timeline, experiments (scenario, seed, steering mode, speed, silencing, replay, log export) |
-| Overlays | Scent (odor field), Danger (webs the fly can see), Trail, Neural (odor and threat readouts around the fly) |
+| Overlays | X-ray (glass fly with the brain inside), Scent (odor field), Danger (webs the fly can see), Trail, Neural (odor and threat readouts around the fly) |
 | Camera | Drag to pan, wheel or pinch to zoom, right-drag or two-finger twist to orbit, F follow, R reset, arrow keys pan when the garden has focus |
+| Views | Garden (overview), Close-up (C: drag orbits the fly, wheel or pinch zooms to its brain), Fly's eyes (E: first person; drag looks around, wheel or pinch sets the field of view). Esc or R returns to the garden |
 
 URL options make runs shareable and reproducible: `?seed=3&scenario=webPatch&mode=connectome`. `?renderer=2d` forces the Canvas 2D renderer and `?brain=legacy` forces the fallback brain.
 
@@ -34,7 +35,7 @@ URL options make runs shareable and reproducible: `?seed=3&scenario=webPatch&mod
 | `js/fly-logic.js` | `FlyPolicy`: behavior states, body commands, feeding intake, drives in simulation time |
 | `js/simulation-clock.js` | Fixed 60 Hz body steps, 10 Hz neural steps, stalls, pause, speed |
 | `js/world-sim.js` | One run: settling, the neural/body schedule, trace, replay log, scenario triggers |
-| `js/world-renderer.js` | WebGL garden, articulated fly, overlays, camera, picking |
+| `js/world-renderer.js` | WebGL garden, articulated fly with the X-ray brain, overlays, garden/close-up/eyes cameras, picking |
 | `js/world-renderer-2d.js` | Canvas 2D fallback renderer of the same state |
 | `js/world-inspector.js` | Trace, timeline, experiments, inspection, explanations |
 | `js/main.js` | Application coordinator: brain loading, renderer selection, tools, UI, caretaker hooks |
@@ -53,7 +54,7 @@ flowchart LR
     P --> D[Hunger, fatigue, modeled fear]
     D --> E
     W --> G[WebGL or 2D garden]
-    B --> I[Neuron panel, Brain 3D, trace]
+    B --> I[Neuron panel, Brain 3D, trace, X-ray brain]
     M --> I
 ```
 
@@ -74,7 +75,7 @@ Coordinate version `world-bl-v1`:
 - **Ground plane:** `x` runs west to east (0–120) and `z` runs north to south (0–90). `y` is altitude.
 - **Heading:** `h` has forward = `(cos h, 0, -sin h)`. Positive yaw turns left (counter-clockwise from above). Three.js `rotation.y = h` for a model built facing +x.
 
-Camera pan, zoom, orbit, resize and follow move only the camera. A browser test checks the simulation fingerprint is unchanged by them. Screen coordinates appear only at the caretaker compatibility boundary.
+Camera pan, zoom, orbit, resize, follow and a change of view move only a camera. Browser tests check the simulation fingerprint is unchanged by them. Screen coordinates appear only at the caretaker compatibility boundary.
 
 ## The garden
 
@@ -233,20 +234,41 @@ With motor output silenced, the fly does not move at all: there is no residual s
 - **Export:** Export log saves the log as JSON.
 - **Pause:** pausing (or hiding the tab) stops world and brain together and resumes the preserved state without a neural reset.
 
+## Views and the brain inside the fly
+
+All three views draw the same state; switching views moves only a camera (browser-tested against the simulation fingerprint).
+
+- **Garden:** the orthographic overview described above, with follow.
+- **Close-up:** a perspective camera orbiting the fly. Its angle is kept in the fly's frame and follows the heading with a 0.6 s lag, so the camera swings round as the fly turns. Zooming in moves the aim from the whole body to the brain.
+- **Fly's eyes:** first person from just in front of the head (0.31 BL up). The fly turns fast (130°/s at the 90th percentile of walking, up to ~650°/s in escapes), so the view follows the heading through two cascaded 0.12 s filters, easing into and out of turns. A drag looks around (grab-the-world) and relaxes back to straight ahead after release. The field of view is set horizontally (110° by default); real compound eyes see about 330°, so this is a window on part of that. The fly's body, its ring and the danger wedge (whose apex would be the camera) are hidden. An inset shows the brain from behind, so the fly's left is on the left.
+
+In both close views the garden walls stand (they fade only in the overview), a sky dome replaces the dark background, and distance haze gives the fly-scale garden depth. Tools work as in the overview: a click places fruit or a web where the ground under the pointer is.
+
+**X-ray (on by default).** The body becomes tinted glass, bright at grazing angles, and a dark lining behind the brain gives its glow contrast. Inside the head, every simulated neuron is drawn as a point:
+
+- **Positions** come from `data/neuron_positions.*`, built by `scripts/build_neuron_positions.py` from the FlyWire Codex `coordinates.csv` (first listed point per neuron, in FAFB nanometres). They are stored in the connectome binary's original order and mapped through the worker's `sortedToOriginal`, like the sidecar. They are checked against the connectome hash and dropped if they do not match.
+- **Orientation:** FAFB `z` (posterior) maps to the fly's back, `y` (ventral) to down, and `x` to the fly's right. FAFB image space is mirrored, so this puts neurons annotated `side=left` on the fly's left, the same side the senses stimulate. A Node test checks sides, dorsal/ventral and anterior/posterior order against known anatomy.
+- **Scale:** the 814 µm-wide brain is drawn 0.26 BL across the optic lobes, about 80% of true scale for a 2.5 mm fly, to fit the model's head and eyes.
+- **Colour** is the neuron's region type (blue sensory, purple central, amber drives, red motor), as in the neuron panel.
+- **Spikes:** while X-ray is on, the worker returns its fire state with each step. With one tick per step, that is exactly the step's spikes. A neuron that spiked is drawn brighter and larger, decaying over 0.15 s of *simulation* time, so pausing freezes the picture and speed changes scale it. Requesting the fire state never changes the dynamics (Node test: identical fingerprints with and without it).
+- **Brightness:** the per-point gain and the number of points drawn follow the brain's size on screen, so it reads the same at every zoom. A distant brain is drawn from an even random subset of neurons (a fixed shuffle, so any prefix is representative), and every drawn point stays above the 8-bit blending floor. Spikes share a brightness budget, like auto-exposure: a few spikes flash at full brightness, and a burst of thousands does not wash the brain out.
+
+What it shows is the simulation: leaky integrate-and-fire spikes of the FlyWire connectome under the garden's stimuli, not recorded neural activity. Each neuron is one annotated point, not its morphology. The bright crescents at the outer edges of the optic lobes are photoreceptors, driven by the light level: dim or darken the garden and they fall quiet.
+
 ## Performance
 
 The plan's targets are 60 fps on a desktop reference device and 30 fps on a mobile reference device with the brain running.
 
-Measured by `node tests/browser/run-browser-tests.js --perf docs` ([browser-performance.json](browser-performance.json)) in headless Chrome 154 on an Apple M1 (8 GB):
+Measured by `node tests/browser/run-browser-tests.js --perf docs` ([browser-performance.json](browser-performance.json)) in headless Chrome 154 on an Apple M1 (8 GB), with the X-ray brain on:
 
-- **Frame rate:** 60 fps with p95 frame time 16.8 ms, vsync-limited. This holds with the garden plus the 139K neuron view, with the follow camera, and with Brain 3D open (three WebGL contexts).
-- **Rendering load:** 144 draw calls and about 32K triangles in the overview.
-- **Brain:** 1.2–1.4 ms of worker time per 100 ms step, and a message round trip of 1.7–3.6 ms. The simulation keeps wall time (ratio 1.00) with zero stalls.
+- **Frame rate:** 60 fps with p95 frame time 16.7–16.8 ms, vsync-limited. This holds with the garden plus the 139K neuron view, with the follow camera, with Brain 3D open (three WebGL contexts), with the close-up zoomed onto the brain (all 139,255 neurons drawn), and in the fly's-eyes view with its brain inset.
+- **Rendering load:** 148 draw calls and about 37K triangles in the overview; 87 calls in the close-up; 92 in the eyes view, including the inset.
+- **Brain:** 1.0–2.3 ms of worker time per 100 ms step, and a message round trip of 1.5–3.5 ms, including the fire state for the X-ray brain. The simulation keeps wall time (ratio 1.00) with zero stalls.
 
 Quality settings:
 
 - Device pixel ratio is capped at 2.
-- Lite mode drops shadows and uses pixel ratio 1.
+- Lite mode drops shadows, uses pixel ratio 1, and caps the brain's fill to 3M pixels a frame (24M otherwise) by drawing fewer, brighter neurons.
 - The garden render loop is suspended while Brain 3D covers it.
 
 **Not measured:** mobile Safari and the bundled WKWebView on real devices. The "phone" sample is desktop emulation and says nothing about phone GPUs. Web and foliage level of detail is not implemented; the overview did not need it on this machine.
@@ -255,21 +277,22 @@ Neural latency: a sudden odor change reaches the antenna samples on the next ste
 
 ## Data provisioning
 
-The FlyWire CSVs, `connectome.bin.gz` and `neuron_meta.json` are tracked in git even though `data/` is otherwise ignored. The generated sidecar is tracked through `.gitignore` exceptions. A fresh checkout therefore has a matching set. To rebuild after changing classification rules or data:
+The FlyWire CSVs, `connectome.bin.gz` and `neuron_meta.json` are tracked in git even though `data/` is otherwise ignored. The generated sidecar and neuron positions are tracked through `.gitignore` exceptions. A fresh checkout therefore has a matching set. To rebuild after changing classification rules or data:
 
 ```sh
 python3 scripts/build_connectome.py            # connectome.bin.gz + neuron_meta.json
 python3 scripts/build_neuron_sidecar.py        # sidecar; refuses to run if the binary's groups disagree
+python3 scripts/build_neuron_positions.py      # positions for the X-ray brain; refuses to run if a neuron has none
 node tools/connectome-baseline.js              # re-measure pathways and calibration
 node tools/world-experiments.js --seeds 10     # re-run the experiments
 ```
 
-The sidecar builder needs numpy. The iOS copy phase (`ios/project.yml` and the checked-in Xcode project) bundles `connectome.bin.gz`, `neuron_meta.json` and both sidecar files. If the sidecar is missing or fails validation, the app still runs, labeled as having no directional populations.
+The sidecar builder needs numpy; the positions builder needs only Python. The iOS copy phase (`ios/project.yml` and the checked-in Xcode project) bundles `connectome.bin.gz`, `neuron_meta.json`, both sidecar files and both position files. If the sidecar is missing or fails validation, the app still runs, labeled as having no directional populations. If the positions are missing or do not match the connectome, the X-ray fly is drawn without a brain, and Inspect → Experiment says why.
 
 ## Testing
 
-- `node tests/run-node.js`: the original 99 regression tests plus world tests. The world tests cover determinism, containment at maximum escape speed, occlusion, asymmetric cues, taste only on contact, no intake without contact, interruption, the clock's one-outstanding-step rule, pause, and camera independence. With data present they also run real-worker integration tests: step protocol determinism, sidecar mapping, pathway responses, exact replay, pause/resume equivalence, hungry versus satiated, and silencing.
-- `node tests/browser/run-browser-tests.js`: headless-Chrome scenarios over the DevTools protocol (no extra dependencies). They cover loading and asset checks, real-time pacing, camera independence, fruit clicks, air drags, observation, hidden-tab pause, Brain 3D coexistence, WebGL context loss, the 2D renderer, the fallback brain, in-browser replay, `file://` loading, and phone-sized touch. Set `CHROME_PATH` to use another Chrome.
+- `node tests/run-node.js`: the original 99 regression tests plus world tests. The world tests cover determinism, containment at maximum escape speed, occlusion, asymmetric cues, taste only on contact, no intake without contact, interruption, the clock's one-outstanding-step rule, pause, camera independence, and the neuron positions format and axis mapping. With data present they also run real-worker integration tests: step protocol determinism, sidecar mapping, pathway responses, exact replay, pause/resume equivalence, hungry versus satiated, silencing, the fire state being display-only, and the positions matching the connectome and the anatomy.
+- `node tests/browser/run-browser-tests.js`: headless-Chrome scenarios over the DevTools protocol (no extra dependencies). They cover loading and asset checks, the X-ray brain (every neuron drawn, spikes arriving, toggling), real-time pacing, camera and view independence (garden, close-up, eyes, and the first-person camera sitting at the head), fruit clicks in the overview and first person, air drags, observation, hidden-tab pause, Brain 3D coexistence, WebGL context loss, the 2D renderer, the fallback brain, in-browser replay, `file://` loading, and phone-sized touch. Set `CHROME_PATH` to use another Chrome.
 
 ## Caretaker integration
 
@@ -298,4 +321,5 @@ Commands use world coordinates (`{"coords": "world", "x": 60, "z": 40}`). Legacy
 - **Visual threat.** The web cue is a designed stimulus. Its responses are those of the connectome to that stimulus, not evidence of web recognition.
 - **No learning.** Weights are fixed. Revisiting fruit, fear decay and route variation are not memory. A bounded plasticity rule with trained-versus-naive comparisons remains a later milestone.
 - **Body.** Walking and short flights only: no climbing, no canopy fruit access, no lethal trapping.
+- **X-ray brain.** One annotated point per neuron, drawn at about 80% scale; the lamina and photoreceptor points sit where FlyWire annotates them, not in a modeled retina. The fly's-eyes view is a single perspective camera, not a model of compound-eye optics or the fly's visual field (the web cue in `world-senses.js` is what the brain receives). The 2D fallback renderer has neither.
 - **Not tested here.** Real mobile devices and the WKWebView bundle. The `file://` browser scenario is only a proxy, because this machine has no Xcode.

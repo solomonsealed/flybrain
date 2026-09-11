@@ -17,8 +17,10 @@ Serve the folder over HTTP (for example `python3 -m http.server`) and open `inde
 - **Light / Temp** -- dim the garden, or warm and cool it.
 - **Follow / Pause / Reset** -- follow camera; pause world and brain together; new run.
 - **Inspect** -- live traces of senses, neural readouts and motor output; an event timeline; repeatable experiments (scenario, seed, steering mode, neural silencing, replay, log export).
+- **Garden / Close-up / Fly's eyes** -- the overview; an orbit around the fly (drag to circle it, scroll in to its brain); or first person from the fly's head (drag to look around, scroll to change the field of view), with its brain in an inset.
+- **X-ray** -- the fly turns to glass. All 139,255 neurons sit at their FlyWire positions inside its head and flash when they fire in the simulation: blue sensory, purple central, red motor.
 
-Drag to pan, scroll to zoom, right-drag to orbit. **F** follows the fly and **R** resets the view. The bottom panel shows all 139K neurons firing (WebGL). **Brain 3D** shows the same recorded activity on a 3D brain.
+In the garden view, drag to pan, scroll to zoom, right-drag to orbit. **F** follows the fly, **C** toggles the close-up, **E** the fly's eyes, **X** the X-ray, and **R** (or **Esc**) returns to the garden. The bottom panel shows all 139K neurons firing (WebGL). **Brain 3D** shows the same recorded activity on a 3D brain.
 
 URL options: `?seed=3&scenario=webPatch&mode=connectome`, `?renderer=2d`, `?brain=legacy`.
 
@@ -36,6 +38,7 @@ node tests/browser/run-browser-tests.js        # headless-Chrome scenarios (CHRO
 node tools/connectome-baseline.js              # regenerate docs/connectome-baseline.*
 node tools/world-experiments.js --seeds 10     # regenerate docs/world-experiments.*
 python3 scripts/build_neuron_sidecar.py        # rebuild the hemisphere/identity sidecar (needs numpy)
+python3 scripts/build_neuron_positions.py      # rebuild the neuron positions drawn inside the X-ray fly
 ```
 
 ## Data Source
@@ -44,7 +47,7 @@ Connectome data from the FlyWire Whole-Brain Connectome:
 
 > Dorkenwald, S., Matsliah, A., Sterling, A.R. *et al.* Neuronal wiring diagram of an adult brain. *Nature* **634**, 124--138 (2024). https://doi.org/10.1038/s41586-024-07558-y
 
-The binary connectome file (`data/connectome.bin.gz`, with `data/neuron_meta.json` and the hemisphere sidecar `data/neuron_sidecar.*`) is derived from the [FlyWire Codex](https://codex.flywire.ai) public dataset (FAFB v783). Neurons are classified into functional groups (sensory, central, drives, motor) based on FlyWire cell type annotations.
+The binary connectome file (`data/connectome.bin.gz`, with `data/neuron_meta.json`, the hemisphere sidecar `data/neuron_sidecar.*` and the neuron positions `data/neuron_positions.*`) is derived from the [FlyWire Codex](https://codex.flywire.ai) public dataset (FAFB v783). Neurons are classified into functional groups (sensory, central, drives, motor) based on FlyWire cell type annotations.
 
 ## Origin
 

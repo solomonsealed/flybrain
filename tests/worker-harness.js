@@ -92,6 +92,16 @@ function loadSidecar() {
 	return { manifest: manifest, buffer: buf };
 }
 
+function loadPositions() {
+	var jsonPath = dataPath('neuron_positions.json');
+	var binPath = dataPath('neuron_positions.bin.gz');
+	if (!fs.existsSync(jsonPath) || !fs.existsSync(binPath)) return null;
+	var manifest = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
+	var raw = zlib.gunzipSync(fs.readFileSync(binPath));
+	var buf = raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength);
+	return { manifest: manifest, buffer: buf };
+}
+
 function sha256(name) {
 	return require('crypto').createHash('sha256').update(fs.readFileSync(dataPath(name))).digest('hex');
 }
@@ -103,5 +113,6 @@ module.exports = {
 	createWorker: createWorker,
 	loadMeta: loadMeta,
 	loadSidecar: loadSidecar,
+	loadPositions: loadPositions,
 	sha256: sha256,
 };
