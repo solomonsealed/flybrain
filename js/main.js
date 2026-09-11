@@ -346,6 +346,8 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			inputCanvas = overlayCanvas;
 		}
 		attachInput(inputCanvas);
+		if (r.setXray) r.setXray(xrayOn);
+		if (r.setBrain && app.brainView) r.setBrain(app.brainView);
 		return r;
 	}
 
@@ -356,6 +358,14 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		if (overlays) for (var k in overlays) app.renderer.setOverlay(k, overlays[k]);
 		setQuality();
 		resize();
+		syncViewUi();
+	}
+
+	// Spikes for the brain drawn inside the fly and for the 139K panel.
+	// Asking for them never changes the worker's dynamics.
+	function wantFireState() {
+		return (typeof NeuroRenderer !== 'undefined' && NeuroRenderer.isActive()) ||
+			!!(app.renderer && app.renderer.wantsFireState && app.renderer.wantsFireState());
 	}
 
 	function setQuality() {
@@ -403,6 +413,10 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 				synapseWeight: cfg.brain.synapseWeight, ticksPerStep: cfg.brain.ticksPerStep
 			}));
 			app.brain = { kind: 'connectome', label: app.backend.label, directional: !!assets.sidecar, validation: assets.validation };
+			if (assets.positions) {
+				app.brainView = { positions: assets.positions, sortedToOriginal: assets.ready.sortedToOriginal, regionType: assets.ready.regionType };
+				if (app.renderer && app.renderer.setBrain) app.renderer.setBrain(app.brainView);
+			}
 			if (inspector) inspector.renderValidation(validationInfo());
 			setBadge();
 			startRun(null, true);
@@ -416,14 +430,20 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	function validationInfo() {
 		var v = app.assets && app.assets.validation;
 		if (!v) return { checks: [], note: app.brain.kind === 'legacy' ? 'Fallback brain: no connectome assets loaded.' : '' };
-		return { checks: v.checks, note: app.assets.sidecar ? 'Hemisphere sidecar v' + app.assets.manifest.version + ' loaded (' + app.assets.manifest.populations.length + ' populations).' :
-			'No neuron sidecar: directional populations are unavailable; see docs/world-model.md.' };
+		var pc = app.assets.positionsCheck;
+		var positionsNote = app.assets.positions ? ' Neuron positions (display only) ' + pc.detail + '.' :
+			' Neuron positions unavailable (' + (pc ? pc.detail : 'not loaded') + '): the X-ray fly shows no brain.';
+		return { checks: v.checks, note: (app.assets.sidecar ? 'Hemisphere sidecar v' + app.assets.manifest.version + ' loaded (' + app.assets.manifest.populations.length + ' populations).' :
+			'No neuron sidecar: directional populations are unavailable; see docs/world-model.md.') + positionsNote };
 	}
 
 	function useLegacyBrain(reason) {
 		var legacy = WorldBrainAdapter.createLegacyBackend({ BRAIN: BRAIN, legacyUpdate: BRAIN.legacyUpdate });
 		app.backend = wrapBackendTiming(legacy);
 		app.brain = { kind: 'legacy', label: legacy.label };
+		// the 59 groups have no neurons to place: an X-ray brain would sit silent
+		app.brainView = null;
+		if (app.renderer && app.renderer.setBrain) app.renderer.setBrain(null);
 		setBadge();
 		if (inspector) inspector.renderValidation(validationInfo());
 		var sub = document.getElementById('connectomeSubtitle');
@@ -461,7 +481,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			state: state || undefined, stateOptions: sc.stateOptions, scheduled: state && !first ? [] : sc.scheduled,
 			triggers: state && !first ? [] : sc.triggers, scenario: app.run.scenario,
 			dataVersion: app.assets && app.assets.manifest ? app.assets.manifest.hashes['connectome.bin.gz'] : null,
-			wantFireState: function () { return typeof NeuroRenderer !== 'undefined' && NeuroRenderer.isActive(); }
+			wantFireState: wantFireState
 		});
 		app.sim = sim;
 		app.replayStatus = '';
@@ -521,7 +541,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		var target = log.finalBodyStep;
 		var original = log.finalFingerprint;
 		app.replayStatus = 'Replaying ' + (target * cfg.clock.bodyDt).toFixed(1) + ' s from a reset brain…';
-		var sim = FlyWorldSim.replay(log, app.backend, { config: cfg });
+		var sim = FlyWorldSim.replay(log, app.backend, { config: cfg, wantFireState: wantFireState });
 		sim.onNeural(onNeuralStep);
 		sim.clock.setSpeed(4);
 		app.sim = sim;
@@ -702,6 +722,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 
 	function onPointerDown(e) {
 		if (e.button !== undefined && e.button !== 0) return;
+		if (inPip(e.clientX, e.clientY)) return;
 		pointer = { x: e.clientX, y: e.clientY, t: performance.now(), id: e.pointerId };
 		if (activeTool === 'air') {
 			var g = app.renderer.screenToGround(e.clientX, e.clientY);
@@ -741,6 +762,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	});
 
 	function handleClick(cx, cy) {
+		if (inPip(cx, cy)) return;
 		var pick = app.renderer.pick(cx, cy);
 		if (!pick) return;
 		var st = currentState();
@@ -818,7 +840,31 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 				octx.stroke();
 			}
 		}
+		if (!twoD) drawPipLabel();
 		if (typeof CaretakerRenderer !== 'undefined') CaretakerRenderer.drawOverlay(octx);
+	}
+
+	// Frame and captions for the eyes view's brain inset.
+	function drawPipLabel() {
+		var pr = app.renderer.pipRect && app.renderer.pipRect();
+		var info = pr && app.renderer.brainInfo && app.renderer.brainInfo();
+		if (!pr || !info) return;
+		var cr = worldCanvas.getBoundingClientRect();
+		var x = cr.left + pr.x - overlayOffset.x, y = cr.top + pr.y - overlayOffset.y;
+		octx.strokeStyle = 'rgba(125, 150, 220, 0.5)';
+		octx.lineWidth = 1;
+		octx.strokeRect(x + 0.5, y + 0.5, pr.w - 1, pr.h - 1);
+		octx.fillStyle = 'rgba(226, 232, 240, 0.9)';
+		octx.font = '600 11px system-ui, -apple-system, sans-serif';
+		octx.textAlign = 'left';
+		octx.fillText('Brain, seen from behind', x + 8, y + 16);
+		octx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+		octx.font = '10px ui-monospace, SFMono-Regular, Menlo, monospace';
+		octx.fillText(info.spikes.toLocaleString() + (pr.w < 240 ? ' firing' : ' of ' + info.neurons.toLocaleString() + ' neurons firing'), x + 8, y + pr.h - 8);
+		octx.textAlign = 'right';
+		octx.fillText('L', x + 16, y + pr.h - 22);
+		octx.fillText('R', x + pr.w - 8, y + pr.h - 22);
+		octx.textAlign = 'left';
 	}
 
 	/* ---------- labels ---------- */
@@ -847,17 +893,19 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		lastLabelUpdate = now;
 		var following = app.renderer.isFollowing && app.renderer.isFollowing();
 		var zoom = app.renderer.camera ? app.renderer.camera.zoom : 1;
+		var view = currentView();
 		for (var i = 0; i < areaLabels.length; i++) {
 			var L = areaLabels[i];
 			var p = app.renderer.worldToScreen(L.area.x, 0.5, L.area.z);
-			var show = !following && zoom < 2.2 && p.visible;
+			var show = view === 'garden' && !following && zoom < 2.2 && p.visible;
 			L.el.style.display = show ? '' : 'none';
 			if (show) L.el.style.transform = 'translate(' + Math.round(p.x) + 'px,' + Math.round(p.y) + 'px) translate(-50%, -50%)';
 		}
 		if (flyLabel) {
-			var fp = app.renderer.worldToScreen(pose.x, pose.y + 1.2, pose.z);
+			// close-up sits right beside the fly, so its tag goes a little lower
+			var fp = app.renderer.worldToScreen(pose.x, pose.y + (view === 'closeup' ? 0.6 : 1.2), pose.z);
 			var b = currentState().behavior.current;
-			flyLabel.textContent = b === 'walk' ? '' : b;
+			flyLabel.textContent = b === 'walk' || view === 'eyes' ? '' : b;
 			flyLabel.style.display = flyLabel.textContent && fp.visible ? '' : 'none';
 			flyLabel.style.transform = 'translate(' + Math.round(fp.x) + 'px,' + Math.round(fp.y) + 'px) translate(-50%, -140%)';
 		}
@@ -899,7 +947,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		var pose = sim ? sim.renderPose() : st.fly;
 		var obscured = typeof Brain3D !== 'undefined' && Brain3D.active;
 		if (app.renderer) {
-			app.renderer.sync(st, pose, sim ? { senses: sim.lastSenses, motor: sim.motorOut } : null);
+			app.renderer.sync(st, pose, sim ? { senses: sim.lastSenses, motor: sim.motorOut, fire: sim.lastResult && sim.lastResult.fireState } : null);
 			app.renderer.suspend(obscured);
 			app.renderer.render();
 			drawOverlay();
@@ -928,13 +976,65 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 
 	function setFollow(on) {
 		if (app.renderer) app.renderer.setFollow(on);
-		var btn = document.getElementById('followBtn');
-		if (btn) { btn.classList.toggle('active', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+		syncViewUi();
+	}
+
+	/* ---------- views (garden, close-up, fly's eyes) and X-ray ---------- */
+
+	var xrayOn = true;
+	var viewBtns = document.querySelectorAll('.view-btn[data-view]');
+	for (var vb = 0; vb < viewBtns.length; vb++) {
+		viewBtns[vb].addEventListener('click', function () { setView(this.getAttribute('data-view')); });
+	}
+
+	function currentView() { return app.renderer && app.renderer.viewMode ? app.renderer.viewMode() : 'garden'; }
+
+	function setView(mode) {
+		if (!app.renderer || !app.renderer.setViewMode) return;
+		app.renderer.setViewMode(mode);
+		syncViewUi();
+	}
+	app.setView = setView;
+	app.view = currentView;
+
+	// Buttons follow the renderer, which can change view on its own (follow
+	// and reset return to the garden; the 2D fallback has no close views).
+	function syncViewUi() {
+		var r = app.renderer, mode = currentView();
+		var group = document.getElementById('view-modes');
+		if (group) group.style.display = r && r.setViewMode ? '' : 'none';
+		for (var i = 0; i < viewBtns.length; i++) {
+			var on = viewBtns[i].getAttribute('data-view') === mode;
+			viewBtns[i].classList.toggle('active', on);
+			viewBtns[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+		}
+		var fb = document.getElementById('followBtn');
+		var following = mode === 'garden' && !!(r && r.isFollowing());
+		if (fb) { fb.classList.toggle('active', following); fb.setAttribute('aria-pressed', following ? 'true' : 'false'); }
+		document.body.setAttribute('data-view', mode);
+	}
+
+	function setXray(on) {
+		xrayOn = !!on;
+		if (app.renderer && app.renderer.setXray) app.renderer.setXray(xrayOn);
+		var btn = document.querySelector('.overlay-btn[data-overlay="xray"]');
+		if (btn) { btn.classList.toggle('active', xrayOn); btn.setAttribute('aria-pressed', xrayOn ? 'true' : 'false'); }
+	}
+	app.setXray = setXray;
+
+	// The eyes view's brain inset covers part of the garden; clicks there are
+	// not garden clicks.
+	function inPip(cx, cy) {
+		var pr = app.renderer && app.renderer.pipRect && app.renderer.pipRect();
+		if (!pr) return false;
+		var cr = worldCanvas.getBoundingClientRect();
+		var x = cx - cr.left, y = cy - cr.top;
+		return x >= pr.x && x <= pr.x + pr.w && y >= pr.y && y <= pr.y + pr.h;
 	}
 
 	document.getElementById('pauseBtn').addEventListener('click', function () { setPaused(!app.userPaused); });
 	document.getElementById('followBtn').addEventListener('click', function () {
-		setFollow(!(app.renderer && app.renderer.isFollowing()));
+		setFollow(!(app.renderer && app.renderer.isFollowing() && currentView() === 'garden'));
 	});
 	document.getElementById('resetBtn').addEventListener('click', function () { app.newRun({}); });
 	document.getElementById('centerButton').onclick = function () { if (app.renderer) app.renderer.resetCamera(); setFollow(false); };
@@ -947,9 +1047,11 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	for (var ob = 0; ob < overlayBtns.length; ob++) {
 		overlayBtns[ob].addEventListener('click', function () {
 			var on = !this.classList.contains('active');
+			var name = this.getAttribute('data-overlay');
+			if (name === 'xray') { setXray(on); return; }
 			this.classList.toggle('active', on);
 			this.setAttribute('aria-pressed', on ? 'true' : 'false');
-			if (app.renderer) app.renderer.setOverlay(this.getAttribute('data-overlay'), on);
+			if (app.renderer) app.renderer.setOverlay(name, on);
 		});
 	}
 
@@ -957,8 +1059,12 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 		if (e.ctrlKey || e.metaKey || e.altKey) return;
 		var tag = e.target.tagName;
 		if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-		if (e.key === 'f' || e.key === 'F') setFollow(!(app.renderer && app.renderer.isFollowing()));
+		if (e.key === 'f' || e.key === 'F') setFollow(!(app.renderer && app.renderer.isFollowing() && currentView() === 'garden'));
 		else if (e.key === 'r' || e.key === 'R' || e.key === 'Home') { if (app.renderer) app.renderer.resetCamera(); setFollow(false); }
+		else if (e.key === 'c' || e.key === 'C') setView(currentView() === 'closeup' ? 'garden' : 'closeup');
+		else if (e.key === 'e' || e.key === 'E') setView(currentView() === 'eyes' ? 'garden' : 'eyes');
+		else if (e.key === 'x' || e.key === 'X') setXray(!xrayOn);
+		else if (e.key === 'Escape' && currentView() !== 'garden') setView('garden');
 		else if (e.key === ' ' && tag !== 'BUTTON') { e.preventDefault(); setPaused(!app.userPaused); }
 		else if (e.key === 'i' || e.key === 'I') { if (inspector) inspector.toggle(); }
 		else if (e.key === 'o' || e.key === 'O') setTool('observe');
@@ -997,7 +1103,11 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 			var top = tb ? tb.getBoundingClientRect().bottom : 44;
 			var lr = lp ? lp.getBoundingClientRect() : null;
 			var bottom = lr && lr.width > window.innerWidth * 0.6 ? Math.max(0, window.innerHeight - lr.top) : 0;
-			if (app.renderer.setInsets) app.renderer.setInsets(top, bottom);
+			// the eyes view's brain inset sits bottom-left: on narrow screens
+			// the overlay row reaches that corner, so the inset sits above it
+			var ot = document.getElementById('overlay-toggles'), clear = bottom;
+			if (ot) { var or = ot.getBoundingClientRect(); if (or.width && or.left < 340) clear = Math.max(bottom, window.innerHeight - or.top + 4); }
+			if (app.renderer.setInsets) app.renderer.setInsets(top, bottom, clear);
 			else app.renderer.resize();
 		}
 	}
@@ -1051,6 +1161,7 @@ var FlyWorldApp = window.FlyWorldApp = (function () {
 	setTool('fruit');
 	resize();
 	setBadge();
+	syncViewUi();
 	inspector.onEvents(app.state.events.slice());
 	requestAnimationFrame(frame);
 	loadBrain();

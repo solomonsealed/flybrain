@@ -382,6 +382,50 @@ function test_encoder_grades_and_silences_inputs() {
 	assertTrue(count(hungry, 0, 200) > count(sated, 0, 200), 'hunger raises olfactory gain');
 }
 
+// Neuron positions asset (display-only): format, validation, orientation.
+function positionsBuffer(n, min, max, qs, magic) {
+	var buf = new ArrayBuffer(36 + n * 6), dv = new DataView(buf);
+	(magic || 'FBNP').split('').forEach(function (ch, i) { dv.setUint8(i, ch.charCodeAt(0)); });
+	dv.setUint32(4, 1, true);
+	dv.setUint32(8, n, true);
+	for (var a = 0; a < 3; a++) { dv.setFloat32(12 + a * 4, min[a], true); dv.setFloat32(24 + a * 4, max[a], true); }
+	for (var i = 0; i < qs.length; i++) dv.setUint16(36 + i * 2, qs[i], true);
+	return buf;
+}
+
+var test_world_neuron_positions_parse_and_validate = function () {
+	var buf = positionsBuffer(2, [0, 0, 0], [800, 400, 200], [0, 0, 0, 65535, 32768, 65535]);
+	var p = WorldBrainAdapter.parsePositions(buf);
+	assertEqual(p.neuronCount, 2, 'neuron count');
+	assertEqual(p.q[3], 65535, 'second neuron x');
+	assertEqual(p.max[1], 400, 'bounds');
+	var threw = false;
+	try { WorldBrainAdapter.parsePositions(positionsBuffer(2, [0, 0, 0], [1, 1, 1], [0, 0, 0, 0, 0, 0], 'XXXX')); } catch (e) { threw = true; }
+	assertTrue(threw, 'bad magic is rejected');
+	threw = false;
+	try { WorldBrainAdapter.parsePositions(buf.slice(0, buf.byteLength - 2)); } catch (e) { threw = true; }
+	assertTrue(threw, 'truncated file is rejected');
+	var manifest = { neuron_count: 2, hashes: { 'connectome.bin.gz': 'abc' } };
+	assertTrue(WorldBrainAdapter.validatePositions(p, manifest, { neuronCount: 2 }, { 'connectome.bin.gz': 'abc' }).ok, 'matching pair accepted');
+	assertTrue(!WorldBrainAdapter.validatePositions(p, manifest, { neuronCount: 3 }, {}).ok, 'count mismatch dropped');
+	assertTrue(!WorldBrainAdapter.validatePositions(p, manifest, { neuronCount: 2 }, { 'connectome.bin.gz': 'def' }).ok, 'other connectome dropped');
+	assertTrue(!WorldBrainAdapter.validatePositions(null, null, { neuronCount: 2 }, {}).ok, 'missing file reported');
+};
+
+var test_world_brain_frame_maps_fafb_axes_onto_the_fly = function () {
+	// FAFB: x toward the fly's right (mirrored image), y ventral, z posterior.
+	var p = WorldBrainAdapter.parsePositions(positionsBuffer(3, [0, 0, 0], [800, 400, 200],
+		[0, 32768, 32768,         // smallest x: the fly's left
+			32768, 0, 32768,      // smallest y: dorsal
+			32768, 32768, 0]));   // smallest z: anterior
+	var f = WorldBrainAdapter.brainFramePosition(p, 0, [0, 0, 0]);
+	assertClose(f[2], -0.5, 1e-9, 'smallest x is on the left (-z) edge');
+	f = WorldBrainAdapter.brainFramePosition(p, 1, [0, 0, 0]);
+	assertClose(f[1], 0.25, 1e-4, 'dorsal is up, scaled by brain width (400/800 / 2)');
+	f = WorldBrainAdapter.brainFramePosition(p, 2, [0, 0, 0]);
+	assertClose(f[0], 0.125, 1e-4, 'anterior is forward (200/800 / 2)');
+};
+
 // ------------------------------------------------------------
 // Section W2: production pipeline on the real worker and data
 // ------------------------------------------------------------
@@ -581,5 +625,56 @@ var test_integration_visible_web_evokes_defense_and_silencing_removes_it = funct
 	var contacts = function (a) { return a.filter(function (x) { return x.silk >= 0; }).length; };
 	assertTrue(contacts(seen) < contacts(blind) || sum(seen, 'closest') > sum(blind, 'closest'),
 		'seeing the web keeps the fly farther from it (contacts ' + contacts(seen) + ' vs ' + contacts(blind) + ')');
+};
+
+// The brain drawn inside the fly asks the worker for its fire state. That
+// must never change what the brain does.
+var test_integration_fire_state_is_display_only = function () {
+	var watched = WorldIntegration.sim({ seed: 7, wantFireState: function () { return true; } });
+	watched.runSeconds(4);
+	var plain = WorldIntegration.sim({ seed: 7 });
+	plain.runSeconds(4);
+	assertEqual(watched.fingerprint(), plain.fingerprint(), 'requesting spikes leaves the run unchanged');
+	var r = watched.lastResult, fired = 0;
+	assertTrue(r.fireState && r.fireState.length === watched.backend.worker.ready.neuronCount, 'fire state covers every neuron');
+	for (var i = 0; i < r.fireState.length; i++) fired += r.fireState[i];
+	assertEqual(fired, r.firedNeurons, 'fire state holds exactly the step\'s spikes (one tick per step)');
+	assertTrue(!plain.lastResult.fireState, 'no fire state unless requested');
+};
+
+var test_integration_neuron_positions_match_the_connectome_and_anatomy = function () {
+	var H = WorldIntegration.H.harness;
+	var loaded = H.loadPositions();
+	assertTrue(loaded, 'data/neuron_positions.* present (python3 scripts/build_neuron_positions.py)');
+	var p = WorldBrainAdapter.parsePositions(loaded.buffer);
+	var b = WorldIntegration.backend(), ready = b.worker.ready;
+	var check = WorldBrainAdapter.validatePositions(p, loaded.manifest, ready, { 'connectome.bin.gz': H.sha256('connectome.bin.gz') });
+	assertTrue(check.ok, 'positions were built from this connectome: ' + check.detail);
+	var sidecar = WorldIntegration.H.loadAssets().sidecar;
+	var meta = WorldIntegration.H.loadAssets().meta;
+	var gid = {};
+	meta.groups.forEach(function (g) { gid[g.name] = g.id; });
+	var s2o = ready.sortedToOriginal, f = [0, 0, 0];
+	// mean body-frame position of a list of sorted indices
+	function mean(list) {
+		var m = [0, 0, 0];
+		for (var i = 0; i < list.length; i++) {
+			WorldBrainAdapter.brainFramePosition(p, s2o[list[i]], f);
+			m[0] += f[0]; m[1] += f[1]; m[2] += f[2];
+		}
+		return m.map(function (v) { return v / list.length; });
+	}
+	function sideList(code) {
+		var out = [];
+		for (var s = 0; s < ready.neuronCount; s++) if (sidecar.side[s2o[s]] === code) out.push(s);
+		return out;
+	}
+	var pops = b.popsInfo.pops, groups = b.popsInfo.groups;
+	assertTrue(mean(sideList(1))[2] < -0.1 && mean(sideList(2))[2] > 0.1, 'neurons annotated left sit on the fly\'s left');
+	assertTrue(mean(pops.PHOTORECEPTOR_L)[2] < -0.3 && mean(pops.PHOTORECEPTOR_R)[2] > 0.3, 'photoreceptors sit out at the eyes, on their own side');
+	assertTrue(mean(pops.ORN_FOOD_L)[2] < mean(pops.ORN_FOOD_R)[2], 'left antennal lobe input is left of the right one');
+	assertTrue(groups.MB_KC.length > 0 && groups.GNG_DESC.length > 0, 'reference groups populated');
+	assertTrue(mean(groups.MB_KC)[1] > mean(groups.GNG_DESC)[1], 'mushroom bodies are dorsal to the gnathal ganglia');
+	assertTrue(mean(groups.OLF_ORN_FOOD)[0] > mean(groups.MB_KC)[0], 'antennal lobes are anterior to the Kenyon cells');
 };
 }

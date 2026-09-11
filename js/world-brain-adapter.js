@@ -43,6 +43,50 @@
 		return { version: version, neuronCount: n, side: side, mask: mask, rootIdOffset: 12, dv: dv };
 	}
 
+	// Parses data/neuron_positions.bin (already decompressed): per-neuron
+	// FAFB positions in nm, original index order. Display-only.
+	function parsePositions(buffer) {
+		var dv = new DataView(buffer);
+		var magic = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+		if (magic !== 'FBNP') throw new Error('neuron positions: bad magic ' + magic);
+		var version = dv.getUint32(4, true);
+		var n = dv.getUint32(8, true);
+		var expected = 36 + n * 6;
+		if (buffer.byteLength !== expected) throw new Error('neuron positions: size ' + buffer.byteLength + ' != ' + expected);
+		var min = [], max = [];
+		for (var a = 0; a < 3; a++) { min.push(dv.getFloat32(12 + a * 4, true)); max.push(dv.getFloat32(24 + a * 4, true)); }
+		var q = new Uint16Array(n * 3);
+		for (var i = 0; i < n * 3; i++) q[i] = dv.getUint16(36 + i * 2, true);
+		return { version: version, neuronCount: n, min: min, max: max, q: q };
+	}
+
+	// Position of neuron `o` (original index) in the fly's body frame, in
+	// brain widths from the centre of the brain's bounds: [0] forward
+	// (anterior), [1] up (dorsal), [2] toward the fly's right. FAFB image
+	// space is mirrored, so neurons annotated side=left have smaller x; this
+	// mapping puts them on the fly's left, matching the sensory sides.
+	function brainFramePosition(p, o, out) {
+		var q = p.q, w = p.max[0] - p.min[0];
+		out[0] = -(q[o * 3 + 2] / 65535 - 0.5) * (p.max[2] - p.min[2]) / w;
+		out[1] = -(q[o * 3 + 1] / 65535 - 0.5) * (p.max[1] - p.min[1]) / w;
+		out[2] = q[o * 3] / 65535 - 0.5;
+		return out;
+	}
+
+	// Positions are only drawn if they describe the loaded connectome's
+	// neurons in its index order; a mismatch drops them (never guessed).
+	function validatePositions(positions, manifest, ready, hashes) {
+		if (!positions || !manifest) return { ok: false, detail: 'not provided' };
+		if (positions.neuronCount !== ready.neuronCount || manifest.neuron_count !== ready.neuronCount) {
+			return { ok: false, detail: 'neuron count ' + positions.neuronCount + ' vs ' + ready.neuronCount };
+		}
+		var have = hashes && hashes['connectome.bin.gz'];
+		if (have && manifest.hashes && manifest.hashes['connectome.bin.gz'] !== have) {
+			return { ok: false, detail: 'built from a different connectome.bin.gz' };
+		}
+		return { ok: true, detail: have ? 'matches connectome.bin.gz' : 'count matches (hashing unavailable)' };
+	}
+
 	function rootIdAt(parsed, i) {
 		var lo = parsed.dv.getUint32(parsed.rootIdOffset + i * 8, true);
 		var hi = parsed.dv.getUint32(parsed.rootIdOffset + i * 8 + 4, true);
@@ -589,6 +633,9 @@
 
 	root.WorldBrainAdapter = {
 		parseSidecar: parseSidecar,
+		parsePositions: parsePositions,
+		validatePositions: validatePositions,
+		brainFramePosition: brainFramePosition,
 		rootIdAt: rootIdAt,
 		validateAssets: validateAssets,
 		buildPopulations: buildPopulations,

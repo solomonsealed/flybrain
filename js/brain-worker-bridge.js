@@ -655,9 +655,11 @@
 	}
 
 	// Loads connectome.bin.gz, neuron_meta.json and (optionally) the neuron
-	// sidecar, validates that they describe the same neurons, and starts the
-	// worker in step mode. Resolves with
-	//   { worker, ready, meta, manifest, sidecar, hashes, validation }
+	// sidecar and neuron positions, validates that they describe the same
+	// neurons, and starts the worker in step mode. Resolves with
+	//   { worker, ready, meta, manifest, sidecar, positions, positionsCheck, hashes, validation }
+	// Positions are display-only, so a missing or mismatched file never
+	// affects the simulation or the other checks.
 	function loadWorldAssets(opts) {
 		opts = opts || {};
 		var base = opts.base || 'data/';
@@ -674,18 +676,27 @@
 			return Promise.all([
 				fetchBinaryWithProgress(base + 'connectome.bin.gz', onProgress),
 				fetchJson(base + 'neuron_sidecar.json').then(null, function () { return null; }),
-				fetchOptionalBinary(base + 'neuron_sidecar.bin.gz')
+				fetchOptionalBinary(base + 'neuron_sidecar.bin.gz'),
+				fetchJson(base + 'neuron_positions.json').then(null, function () { return null; }),
+				fetchOptionalBinary(base + 'neuron_positions.bin.gz')
 			]);
 		}).then(function (parts) {
 			var bin = parts[0];
 			out.manifest = parts[1];
+			out.positionsManifest = parts[3];
 			return sha256Hex(bin).then(function (hash) {
 				if (hash) out.hashes['connectome.bin.gz'] = hash;
 				var sidecarPromise = parts[2] && out.manifest ? gunzip(parts[2]) : Promise.resolve(null);
-				return sidecarPromise.then(function (sidecarRaw) {
+				var positionsPromise = parts[4] && out.positionsManifest ? gunzip(parts[4]).then(null, function () { return null; }) : Promise.resolve(null);
+				return Promise.all([sidecarPromise, positionsPromise]).then(function (raws) {
+					var sidecarRaw = raws[0];
 					if (sidecarRaw && typeof WorldBrainAdapter !== 'undefined') {
 						try { out.sidecar = WorldBrainAdapter.parseSidecar(sidecarRaw); }
 						catch (e) { console.warn('Neuron sidecar rejected:', e.message); out.sidecar = null; }
+					}
+					if (raws[1] && typeof WorldBrainAdapter !== 'undefined') {
+						try { out.positions = WorldBrainAdapter.parsePositions(raws[1]); }
+						catch (e) { console.warn('Neuron positions rejected:', e.message); out.positions = null; }
 					}
 					return startStepWorker(bin);
 				});
@@ -700,6 +711,11 @@
 					// Never guess an index mapping: drop directional populations.
 					out.sidecar = null;
 					out.manifest = null;
+				}
+				out.positionsCheck = WorldBrainAdapter.validatePositions(out.positions, out.positionsManifest, out.ready, out.hashes);
+				if (!out.positionsCheck.ok) {
+					if (out.positions) console.warn('Neuron positions dropped:', out.positionsCheck.detail);
+					out.positions = null;
 				}
 			}
 			var subtitle = document.getElementById('connectomeSubtitle');

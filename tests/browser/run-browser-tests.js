@@ -32,13 +32,72 @@ function ready(page, url) {
 var scenarios = [
 	['loads with the connectome and valid assets', function (page) {
 		return ready(page).then(function () {
-			return page.eval('({ brain: FlyWorldApp.brain.kind, renderer: FlyWorldApp.renderer.kind, checks: FlyWorldApp.brain.validation.checks, directional: FlyWorldApp.brain.directional })');
+			return page.eval('({ brain: FlyWorldApp.brain.kind, renderer: FlyWorldApp.renderer.kind, checks: FlyWorldApp.brain.validation.checks, directional: FlyWorldApp.brain.directional, positions: FlyWorldApp.assets.positionsCheck })');
 		}).then(function (r) {
 			assert(r.brain === 'connectome', 'brain is ' + r.brain);
 			assert(r.renderer === 'webgl', 'renderer is ' + r.renderer);
 			assert(r.directional, 'hemisphere sidecar loaded');
 			r.checks.forEach(function (c) { assert(c.ok, 'asset check failed: ' + c.name); });
+			assert(r.positions && r.positions.ok, 'neuron positions match the connectome: ' + (r.positions && r.positions.detail));
 		});
+	}],
+	['the X-ray fly draws every neuron and lights the ones that fire', function (page) {
+		return ready(page).then(function () { return page.waitFor('FlyWorldApp.renderer.brainInfo() && FlyWorldApp.renderer.brainInfo().spikes > 0', 10000); })
+			.then(function () { return page.eval('({ info: FlyWorldApp.renderer.brainInfo(), want: FlyWorldApp.renderer.wantsFireState(), n: FlyWorldApp.assets.ready.neuronCount })'); })
+			.then(function (r) {
+				assert(r.info.neurons === r.n, 'brain holds ' + r.info.neurons + ' of ' + r.n + ' neurons');
+				assert(r.want, 'renderer asks for spikes while X-ray is on');
+				return page.eval('FlyWorldApp.setXray(false); ({ want: FlyWorldApp.renderer.wantsFireState(), btn: document.querySelector(\'[data-overlay="xray"]\').classList.contains("active") })');
+			})
+			.then(function (r) {
+				assert(!r.want && !r.btn, 'X-ray off: opaque fly, no spikes requested');
+				return page.eval('FlyWorldApp.setXray(true); FlyWorldApp.setView("closeup"); FlyWorldApp.renderer.zoomBy(4); true');
+			})
+			.then(function () { return cdp.sleep(800); })
+			.then(function () { return page.eval('FlyWorldApp.renderer.brainInfo()'); })
+			.then(function (info) {
+				assert(info.drawn === info.neurons, 'close-up draws all ' + info.neurons + ' neurons (drew ' + info.drawn + ')');
+				// a worker failure falls back to the 59 groups, which have no neurons to place
+				return page.eval('BRAIN.workerBridge.fail(new Error("test failure")); ({ info: FlyWorldApp.renderer.brainInfo(), want: FlyWorldApp.renderer.wantsFireState(), kind: FlyWorldApp.brain.kind })');
+			})
+			.then(function (r) { assert(r.kind === 'legacy' && r.info === null && !r.want, 'fallback removes the X-ray brain (' + JSON.stringify(r) + ')'); });
+	}],
+	['close-up and fly\'s-eyes views never move the world', function (page) {
+		var fp;
+		return ready(page).then(function () { return page.eval('FlyWorldApp.setPaused(true), FlyWorldApp.sim.fingerprint()'); })
+			.then(function (f) { fp = f; return page.eval('document.querySelector(\'[data-view="closeup"]\').click(); FlyWorldApp.view()'); })
+			.then(function (v) { assert(v === 'closeup', 'close-up button switches view (' + v + ')'); return page.drag(700, 400, 520, 330); })
+			.then(function () { return page.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 700, y: 400, deltaX: 0, deltaY: -400 }); })
+			.then(function () { return page.eval('document.querySelector(\'[data-view="eyes"]\').click(); FlyWorldApp.view()'); })
+			.then(function (v) { assert(v === 'eyes', 'eyes button switches view (' + v + ')'); return page.drag(700, 400, 900, 450); })
+			.then(function () { return cdp.sleep(300); })
+			.then(function () {
+				// the first-person camera sits at the fly's head
+				return page.eval('(function () { var c = FlyWorldApp.renderer.activeCamera().position, f = FlyWorldApp.getState().fly; return { d: Math.hypot(c.x - f.x, c.z - f.z), dy: c.y - f.y, persp: FlyWorldApp.renderer.activeCamera().isPerspectiveCamera }; })()');
+			})
+			.then(function (r) {
+				assert(r.persp && r.d > 0.2 && r.d < 0.7 && Math.abs(r.dy - 0.31) < 0.05, 'eyes camera at the head (d ' + r.d.toFixed(2) + ', dy ' + r.dy.toFixed(2) + ')');
+				return page.eval('FlyWorldApp.renderer.zoomBy(1.5); document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); FlyWorldApp.view()');
+			})
+			.then(function (v) { assert(v === 'garden', 'Escape returns to the garden (' + v + ')'); return page.eval('FlyWorldApp.sim.fingerprint()'); })
+			.then(function (f2) { assert(f2 === fp, 'fingerprint changed while only the view changed'); return page.eval('FlyWorldApp.setPaused(false)'); });
+	}],
+	['in the fly\'s eyes view a fruit-tool click lands on the ground it points at', function (page) {
+		var target;
+		return ready(page).then(function () { return page.eval('FlyWorldApp.setTool("fruit"); FlyWorldApp.setPaused(true); FlyWorldApp.setView("eyes"); true'); })
+			.then(function () { return cdp.sleep(400); })
+			.then(function () {
+				// a spot on the ground 6 BL ahead of the fly, slightly to its left
+				return page.eval('(function () { var f = FlyWorldApp.getState().fly, fw = WorldState.forward(f.heading), l = WorldState.left(f.heading); var x = f.x + fw.x * 6 + l.x, z = f.z + fw.z * 6 + l.z; var p = FlyWorldApp.renderer.worldToScreen(x, 0, z); return { x: x, z: z, sx: p.x, sy: p.y, visible: p.visible }; })()');
+			})
+			.then(function (t) { target = t; assert(t.visible, 'ground ahead is in view'); return page.click(t.sx, t.sy); })
+			.then(function () { return cdp.sleep(200); })
+			.then(function () { return page.eval('FlyWorldApp.getState().fruits.filter(function (f) { return f.source === "user"; })'); })
+			.then(function (fr) {
+				assert(fr.length === 1, 'expected one user fruit, got ' + fr.length);
+				assert(Math.hypot(fr[0].x - target.x, fr[0].z - target.z) < 0.5, 'fruit at ' + fr[0].x.toFixed(2) + ',' + fr[0].z.toFixed(2) + ' vs ' + target.x.toFixed(2) + ',' + target.z.toFixed(2));
+				return page.eval('FlyWorldApp.setView("garden"); FlyWorldApp.setPaused(false)');
+			});
 	}],
 	['keeps simulated time close to wall time', function (page) {
 		var t0;
@@ -148,10 +207,11 @@ var scenarios = [
 	}],
 	['loads from file:// like the iOS bundle (XHR, gzip, worker)', function (page) {
 		return ready(page, 'file://' + ROOT + '/index.html').then(function () {
-			return page.eval('({ brain: FlyWorldApp.brain.kind, directional: FlyWorldApp.brain.directional, checks: FlyWorldApp.brain.validation.checks })');
+			return page.eval('({ brain: FlyWorldApp.brain.kind, directional: FlyWorldApp.brain.directional, checks: FlyWorldApp.brain.validation.checks, positions: !!FlyWorldApp.renderer.brainInfo() })');
 		}).then(function (r) {
 			assert(r.brain === 'connectome', 'connectome loads from file:// (got ' + r.brain + ')');
 			assert(r.directional, 'sidecar loads from file://');
+			assert(r.positions, 'neuron positions load from file://');
 			r.checks.forEach(function (c) { assert(c.ok, 'asset check failed: ' + c.name); });
 		});
 	}],
@@ -221,6 +281,10 @@ function perfSample(browser) {
 			'document.getElementById("connectomeToggleBtn").click(); FlyWorldApp.renderer.setFollow(true); NeuroRenderer.isActive()'); })
 		.then(function () { return one('desktop 1400x900, Brain 3D open (garden render suspended) + 139K view: three WebGL contexts', BASE, null,
 			'document.getElementById("brain3dBtn").click(); Brain3D.active'); })
+		.then(function () { return one('desktop 1400x900, close-up zoomed onto the X-ray brain (all 139K neurons drawn)', BASE, null,
+			'FlyWorldApp.setView("closeup"); FlyWorldApp.renderer.zoomBy(4); true'); })
+		.then(function () { return one('desktop 1400x900, fly\'s eyes (first person) with the brain inset', BASE, null,
+			'FlyWorldApp.setView("eyes"); true'); })
 		.then(function () { return one('phone viewport 390x844 @3x (emulated on desktop)', BASE, { width: 390, height: 844, deviceScaleFactor: 3, mobile: true, touch: true }); })
 		.then(function () {
 			var os = require('os');

@@ -36,7 +36,9 @@ A browser-based virtual fruit fly driven by the FlyWire connectome, living in a 
   - *Connectome + modeled steering* (default): adds a labeled bilateral odor comparison and odor-gated upwind turning.
   - *Connectome readout only*: those two terms are off.
   - *Fallback*: the 59-group approximation, used only if the connectome fails.
-- **Tools.** Observe, Fruit, Web, Touch, Air, Light, Temp, Follow, Pause, Reset, and an Inspect panel (trace, events, experiments, inspection), plus Scent, Danger, Trail and Neural overlays. Runs are seeded and replayable from logs; the caretaker uses the same command API in world coordinates.
+- **Tools.** Observe, Fruit, Web, Touch, Air, Light, Temp, Follow, Pause, Reset, and an Inspect panel (trace, events, experiments, inspection), plus X-ray, Scent, Danger, Trail and Neural overlays. Runs are seeded and replayable from logs; the caretaker uses the same command API in world coordinates.
+- **Views.** Garden (orthographic overview), Close-up (a perspective orbit around the fly) and Fly's eyes (first person from the head, with a live brain inset). Views only move cameras.
+- **X-ray.** The fly's body is glass, and every connectome neuron sits at its FlyWire position inside the head, flashing when it spikes in the simulation. Positions and spikes are display-only.
 - **Evidence.** [docs/connectome-baseline.md](docs/connectome-baseline.md) and [docs/world-experiments.md](docs/world-experiments.md).
 
 ## Origin

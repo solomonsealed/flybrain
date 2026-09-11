@@ -352,7 +352,8 @@
 		var sim = create({
 			config: extra.config, seed: log.seed, backend: backend, mode: log.mode,
 			state: log.initialState ? root.WorldState.deserialize(log.initialState) : undefined,
-			stateOptions: log.stateOptions, scheduled: scheduled, dataVersion: log.dataVersion, scenario: log.scenario
+			stateOptions: log.stateOptions, scheduled: scheduled, dataVersion: log.dataVersion, scenario: log.scenario,
+			wantFireState: extra.wantFireState
 		});
 		sim.settle(log.initialBrain && log.initialBrain.settleSteps !== undefined ? log.initialBrain.settleSteps : 0, extra.onSettled);
 		return sim;

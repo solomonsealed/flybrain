@@ -1,25 +1,40 @@
 /* world-renderer.js -- WebGL garden (Three.js r128): scene, meshes, fly
- * animation, camera, overlays and picking.
+ * animation, cameras, overlays, the brain inside the fly, and picking.
  *
  * Draws the shared world state; it never changes it. Camera pan, zoom,
- * orbit, resize or follow only move the camera, so they cannot affect the
- * simulation. Cosmetic randomness (leaf placement, strand wobble phases)
- * uses its own generator seeded from state.cosmeticSeed.
+ * orbit, resize, follow or a change of view only move a camera, so they
+ * cannot affect the simulation. Cosmetic randomness (leaf placement, strand
+ * wobble phases) uses its own generator seeded from state.cosmeticSeed.
+ *
+ * Views: 'garden' (orthographic overview, OrbitControls), 'closeup' (a
+ * perspective camera orbiting the fly) and 'eyes' (first person, from the
+ * fly's head, with a live brain inset). In the close views, drag orbits or
+ * looks around and the wheel or a pinch zooms.
+ *
+ * X-ray: the fly's body is drawn as glass, with every connectome neuron at
+ * its FlyWire position inside the head, lit when it fires. Positions and
+ * spikes are display-only.
  *
  * API (shared with world-renderer-2d.js):
  *   create(canvas, config, state) -> renderer | throws if WebGL unavailable
- *   renderer.sync(state, pose, info)   update dynamic objects for this frame
+ *   renderer.sync(state, pose, info)   update dynamic objects for this frame;
+ *                                      info.fire: the latest worker fire state
  *   renderer.render()
  *   renderer.pick(clientX, clientY)    -> {type, id, x, z} | null
  *   renderer.screenToGround(cx, cy)    -> {x, z} | null
  *   renderer.worldToScreen(x, y, z)    -> {x, y, visible}
  *   renderer.setFollow(on), resetCamera(), zoomBy(f), setOverlay(name, on),
  *   renderer.select(obj), resize(), suspend(on), dispose(), kind
+ * WebGL only:
+ *   renderer.setViewMode('garden' | 'closeup' | 'eyes'), viewMode()
+ *   renderer.setBrain({positions, sortedToOriginal, regionType} | null)
+ *   renderer.setXray(on), xray(), wantsFireState(), brainInfo(), pipRect()
  */
 (function (root) {
 	'use strict';
 
 	var WS = root.WorldState;
+	var WB = root.WorldBrainAdapter;
 
 	function cosmeticRng(seed) {
 		var rng = root.WorldRandom.create(seed);
@@ -32,6 +47,116 @@
 		walk: [0.55, 0.8, 1.0], feed: [1.0, 0.8, 0.25], startle: [1.0, 0.35, 0.3], fly: [0.85, 0.55, 1.0],
 		groom: [0.6, 1.0, 0.6], rest: [0.6, 0.6, 0.7], idle: [0.75, 0.75, 0.75], brace: [0.6, 0.9, 0.9], snagged: [1.0, 0.2, 0.6]
 	};
+
+	/* ---------- X-ray fly: glass body and the brain inside ---------- */
+
+	// Brain placement in the fly model's frame (faces +x, y up, left = -z).
+	// FlyWire's brain is 814 um across the optic lobes; the model's head and
+	// eyes are narrower than a real fly's, so it is drawn at ~80% of true
+	// scale relative to the 2.5 mm body.
+	var BRAIN_CENTER = [0.3, 0.29, 0];
+	var BRAIN_WIDTH = 0.26;              // BL across the optic lobes
+	var NEURON_SIZE = 0.0032;            // BL, drawn diameter of one neuron
+	var SPIKE_TAU = 0.15;                // s (simulation time), glow decay after a spike
+	var BRAIN_GLOW = 0.3;                // mean resting brightness over the brain
+	var SPIKE_GLOW = 0.45;               // mean brightness budget for firing neurons
+	var MIN_POINT_GAIN = 0.006;          // below this, additive 8-bit blending loses a point
+	// Region colors match the neuron panel (sensory, central, drives, motor).
+	var REGION_RGB = [[84, 150, 255], [168, 118, 255], [255, 178, 50], [255, 90, 90]];
+
+	// Glass: tinted, mostly clear in the middle, bright at grazing angles.
+	var GLASS_VS = [
+		'varying vec3 vNormal;',
+		'varying vec3 vView;',
+		'varying vec2 vUv;',
+		'void main() {',
+		'	vUv = uv;',
+		'	vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+		'	vNormal = normalize(normalMatrix * normal);',
+		'	vView = isOrthographic ? vec3(0.0, 0.0, 1.0) : normalize(-mv.xyz);',
+		'	gl_Position = projectionMatrix * mv;',
+		'}'
+	].join('\n');
+	var GLASS_FS = [
+		'uniform vec3 uTint;',
+		'uniform vec3 uRim;',
+		'uniform float uOpacity;',
+		'uniform float uRimStrength;',
+		'uniform float uLight;',
+		'uniform float uUseMap;',
+		'uniform sampler2D uMap;',
+		'varying vec3 vNormal;',
+		'varying vec3 vView;',
+		'varying vec2 vUv;',
+		'void main() {',
+		'	vec3 n = normalize(vNormal), v = normalize(vView);',
+		'	float rim = pow(1.0 - abs(dot(n, v)), 2.2);',
+		'	float spec = pow(max(dot(n, normalize(v + vec3(-0.35, 0.8, 0.5))), 0.0), 48.0);',
+		'	vec3 tint = mix(uTint, texture2D(uMap, vUv).rgb, uUseMap);',
+		'	vec3 color = tint * (0.4 + 0.6 * uLight) + uRim * rim * uRimStrength + vec3(spec * 0.45 * uLight);',
+		'	gl_FragColor = vec4(color, clamp(uOpacity + rim * uRimStrength * 0.75 + spec * 0.3, 0.0, 1.0));',
+		'}'
+	].join('\n');
+
+	// Neurons: soft additive points. aSpike is the simulation time of the
+	// neuron's latest spike, so the glow decays in simulated time (and holds
+	// still while paused). uBase and the draw range are set per frame from
+	// the brain's size on screen, so it reads the same at every zoom.
+	var BRAIN_VS = [
+		'attribute vec3 aColor;',
+		'attribute float aSpike;',
+		'uniform float uTime;',
+		'uniform float uTau;',
+		'uniform float uSize;',
+		'uniform float uPx;',
+		'uniform float uBase;',
+		'uniform float uHot;',
+		'varying vec3 vColor;',
+		'void main() {',
+		'	vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+		'	gl_Position = projectionMatrix * mv;',
+		'	float age = uTime - aSpike;',
+		'	float act = age >= 0.0 ? exp(-age / uTau) : 0.0;',
+		'	float px = uSize * projectionMatrix[1][1] * uPx;',
+		'	if (!isOrthographic) px /= max(-mv.z, 1e-4);',
+		'	gl_PointSize = clamp(px * (1.0 + 0.6 * act), 1.0, 40.0);',
+		'	vColor = aColor * uBase + mix(aColor, vec3(1.0, 0.97, 0.9), 0.55) * (uHot * act);',
+		'}'
+	].join('\n');
+	var BRAIN_FS = [
+		'varying vec3 vColor;',
+		'void main() {',
+		'	vec2 d = gl_PointCoord - 0.5;',
+		'	float r2 = dot(d, d) * 4.0;',
+		'	if (r2 > 1.0) discard;',
+		'	gl_FragColor = vec4(vColor * (1.0 - r2), 1.0);',
+		'}'
+	].join('\n');
+
+	// Sky dome for the perspective views (the overview looks down and never
+	// sees it).
+	var SKY_VS = [
+		'varying vec3 vDir;',
+		'void main() {',
+		'	vDir = normalize(position);',
+		'	gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+		'}'
+	].join('\n');
+	var SKY_FS = [
+		'uniform vec3 uZenith;',
+		'uniform vec3 uHorizon;',
+		'varying vec3 vDir;',
+		'void main() {',
+		'	float h = clamp(vDir.y, 0.0, 1.0);',
+		'	gl_FragColor = vec4(mix(uHorizon, uZenith, pow(h, 0.6)), 1.0);',
+		'}'
+	].join('\n');
+
+	function normAngle(a) {
+		a = (a + Math.PI) % (2 * Math.PI);
+		if (a < 0) a += 2 * Math.PI;
+		return a - Math.PI;
+	}
 
 	function create(canvas, cfg, state, options) {
 		options = options || {};
@@ -94,6 +219,19 @@
 			}
 		});
 
+		// Close views share one perspective camera. Close-up orbits the fly:
+		// yaw is measured in the fly's frame (0 = behind it, positive = toward
+		// its left), so the camera swings round lazily as the fly turns. The
+		// eyes view sits in front of the head; yaw/pitch there are a look
+		// offset from the heading that relaxes back after a drag.
+		var persp = new THREE.PerspectiveCamera(45, 1, 0.02, 1000);
+		var viewMode = 'garden';
+		var panEnabled = true;
+		var CLOSE_HOME = { yaw: 0.7, pitch: 0.34, dist: 1.3 };
+		var close = { yaw: CLOSE_HOME.yaw, pitch: CLOSE_HOME.pitch, dist: CLOSE_HOME.dist, heading: null };
+		var eyes = { yaw: 0, pitch: 0, hfov: 110, heading: null, heading1: null };
+		function activeCamera() { return viewMode === 'garden' ? camera : persp; }
+
 		/* ---------- lights ---------- */
 
 		var hemi = new THREE.HemisphereLight(0xe9f1ff, 0x5a4a36, 0.55);
@@ -112,6 +250,16 @@
 		var fill = new THREE.DirectionalLight(0xbfd6ff, 0.18);
 		fill.position.set(cx - 80, 60, cz - 60);
 		scene.add(fill);
+
+		var skyMat = track(new THREE.ShaderMaterial({
+			uniforms: { uZenith: { value: new THREE.Color(0x6f9ccc) }, uHorizon: { value: new THREE.Color(0xc9d4cf) } },
+			vertexShader: SKY_VS, fragmentShader: SKY_FS, side: THREE.BackSide, depthWrite: false
+		}));
+		var sky = new THREE.Mesh(track(new THREE.SphereGeometry(450, 32, 16)), skyMat);
+		sky.position.set(cx, 0, cz);
+		sky.renderOrder = -10;
+		sky.visible = false;
+		scene.add(sky);
 
 		/* ---------- procedural textures ---------- */
 
@@ -306,7 +454,8 @@
 				scene.add(br);
 			});
 			var n = Math.round(t.canopyRadius * 9);
-			var inst = new THREE.InstancedMesh(leafGeo, leafMat, n);
+			// per-tree material so one canopy can thin without the others
+			var inst = new THREE.InstancedMesh(leafGeo, track(leafMat.clone()), n);
 			var m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color();
 			var base = t.species === 'fig' ? [0.3, 0.45, 0.2] : (t.species === 'apple' ? [0.28, 0.5, 0.22] : [0.32, 0.42, 0.26]);
 			for (var i = 0; i < n; i++) {
@@ -324,6 +473,7 @@
 			}
 			inst.castShadow = true;
 			inst.userData.baseOpacity = 1;
+			inst.userData.tree = t;
 			scene.add(inst);
 			canopyMeshes.push(inst);
 		});
@@ -589,6 +739,8 @@
 
 		/* ---------- the fly ---------- */
 
+		var whiteTex = track(new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat));
+		whiteTex.needsUpdate = true;
 		var fly = buildFly();
 		scene.add(fly.root);
 
@@ -606,27 +758,52 @@
 			var mEye = track(new THREE.MeshStandardMaterial({ color: 0xb3121a, roughness: 0.3, emissive: 0x3a0000 }));
 			var mDark = track(new THREE.MeshStandardMaterial({ color: 0x3d2b0f, roughness: 0.8 }));
 			var mWing = track(new THREE.MeshStandardMaterial({ color: 0xdfe7f3, transparent: true, opacity: 0.42, roughness: 0.2, side: THREE.DoubleSide, depthWrite: false }));
-			var sph = track(new THREE.SphereGeometry(1, 16, 12));
-			var abdGeo = track(new THREE.SphereGeometry(1, 16, 16));
+			var sph = track(new THREE.SphereGeometry(1, 24, 18));
+			var abdGeo = track(new THREE.SphereGeometry(1, 20, 16));
 			abdGeo.rotateZ(Math.PI / 2);
+			var glass = {
+				thorax: glassMaterial({ tint: 0x9a7420, rim: 0xffd690, opacity: 0.1, rimStrength: 0.55 }),
+				head: glassMaterial({ tint: 0x9a7420, rim: 0xffe3ae, opacity: 0.04, rimStrength: 0.5 }),
+				abdomen: glassMaterial({ map: stripeTex, rim: 0xffcf7a, opacity: 0.13, rimStrength: 0.5 }),
+				eye: glassMaterial({ tint: 0xc0141e, rim: 0xff6a58, opacity: 0.1, rimStrength: 0.6 })
+			};
+			// Smoked lining: the far inside wall of the head and eyes, drawn
+			// before the brain, so the additive glow has a dark backdrop even
+			// over sunlit sand.
+			var lining = track(new THREE.MeshBasicMaterial({ color: 0x05070d, transparent: true, opacity: 0.7, side: THREE.BackSide, depthWrite: false }));
+			var shells = [];   // body parts that turn to glass in X-ray
+			function shell(mesh, opaque, glassMat) { shells.push({ mesh: mesh, opaque: opaque, glass: glassMat }); return mesh; }
+			var linings = [];
+			function lined(src) {
+				var m = new THREE.Mesh(src.geometry, lining);
+				m.position.copy(src.position);
+				m.scale.copy(src.scale).multiplyScalar(0.97);
+				m.renderOrder = 4;
+				body.add(m);
+				linings.push(m);
+			}
 
-			var thorax = new THREE.Mesh(sph, mThorax);
+			var thorax = shell(new THREE.Mesh(sph, mThorax), mThorax, glass.thorax);
 			thorax.scale.set(0.17, 0.13, 0.13);
 			thorax.position.set(0.08, 0.26, 0);
 			body.add(thorax);
-			var abdomen = new THREE.Mesh(abdGeo, mAbd);
+			var abdomen = shell(new THREE.Mesh(abdGeo, mAbd), mAbd, glass.abdomen);
 			abdomen.scale.set(0.27, 0.14, 0.15);
 			abdomen.position.set(-0.24, 0.24, 0);
 			body.add(abdomen);
-			var head = new THREE.Mesh(sph, mThorax);
+			var head = shell(new THREE.Mesh(sph, mThorax), mThorax, glass.head);
 			head.scale.set(0.09, 0.1, 0.12);
 			head.position.set(0.3, 0.28, 0);
 			body.add(head);
+			lined(head);
+			var eyes = [];
 			[-1, 1].forEach(function (s) {
-				var eye = new THREE.Mesh(sph, mEye);
+				var eye = shell(new THREE.Mesh(sph, mEye), mEye, glass.eye);
 				eye.scale.set(0.07, 0.08, 0.055);
 				eye.position.set(0.31, 0.3, s * 0.085);
 				body.add(eye);
+				lined(eye);
+				eyes.push(eye);
 			});
 			var segGeo = track(new THREE.CylinderGeometry(0.012, 0.012, 1, 5));
 			segGeo.translate(0, 0.5, 0);
@@ -707,7 +884,23 @@
 			scene.add(marker);
 			rootG.userData.pick = { type: 'fly' };
 			return { root: rootG, body: body, antennae: antennae, prob: prob, wings: wings, legs: legs, marker: marker, ring: ring, blob: blob,
+				head: head, eyes: eyes, shells: shells, glass: glass, linings: linings, lining: lining, dark: mDark,
 				walkPhase: 0, twitchT: 0, twitch: [0, 0], twitchTarget: [0, 0], probExt: 0, spread: 0 };
+		}
+
+		function glassMaterial(o) {
+			return track(new THREE.ShaderMaterial({
+				uniforms: {
+					uTint: { value: new THREE.Color(o.tint !== undefined ? o.tint : 0xffffff) },
+					uRim: { value: new THREE.Color(o.rim) },
+					uOpacity: { value: o.opacity },
+					uRimStrength: { value: o.rimStrength },
+					uLight: { value: 1 },
+					uUseMap: { value: o.map ? 1 : 0 },
+					uMap: { value: o.map || whiteTex }
+				},
+				vertexShader: GLASS_VS, fragmentShader: GLASS_FS, transparent: true, depthWrite: false
+			}));
 		}
 
 		var crand = cosmeticRng((state.cosmeticSeed ^ 0xa5a5a5) >>> 0);
@@ -763,7 +956,301 @@
 			fly.blob.rotation.z = pose.heading;
 			var zoomFade = clamp(1.6 - camera.zoom / 5, 0.25, 0.9);
 			fly.ring.material.opacity = zoomFade;
+			// the eyes view is inside the head; the findability ring is for the overview
+			fly.root.visible = viewMode !== 'eyes';
+			fly.marker.visible = viewMode !== 'eyes';
+			fly.ring.visible = viewMode === 'garden';
 		}
+
+		/* ---------- X-ray: glass body and the brain inside ---------- */
+
+		var xray = true;
+		var brainMat = track(new THREE.ShaderMaterial({
+			uniforms: {
+				uTime: { value: 0 }, uTau: { value: SPIKE_TAU }, uSize: { value: NEURON_SIZE },
+				uPx: { value: 400 }, uBase: { value: 0.01 }, uHot: { value: 1 }
+			},
+			vertexShader: BRAIN_VS, fragmentShader: BRAIN_FS,
+			transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+		}));
+		var brain = null;   // built by setBrain once the connectome and positions load
+		var brainFragments = 24e6;   // fill budget per frame (device pixels); lower in lite mode
+		var brainWorld = new THREE.Vector3();
+		var yAxis = new THREE.Vector3(0, 1, 0);
+		function noRaycast() {}
+
+		// The brain inset shown in the eyes view: the same neurons (shared
+		// geometry and material) inside a glass head, seen from behind and
+		// above so the fly's left is on the left.
+		var pip = { scene: new THREE.Scene(), cam: new THREE.PerspectiveCamera(30, 4 / 3, 0.01, 20), rect: null,
+			center: new THREE.Vector3(BRAIN_CENTER[0], BRAIN_CENTER[1], BRAIN_CENTER[2]) };
+		(function () {
+			[fly.head].concat(fly.eyes).forEach(function (src) {
+				var m = new THREE.Mesh(src.geometry, src === fly.head ? fly.glass.head : fly.glass.eye);
+				m.position.copy(src.position);
+				m.scale.copy(src.scale);
+				m.renderOrder = 6;
+				pip.scene.add(m);
+			});
+			fly.linings.forEach(function (src) {
+				var m = new THREE.Mesh(src.geometry, fly.lining);
+				m.position.copy(src.position);
+				m.scale.copy(src.scale);
+				m.renderOrder = 4;
+				pip.scene.add(m);
+			});
+		})();
+
+		function applyXray() {
+			for (var i = 0; i < fly.shells.length; i++) {
+				var s = fly.shells[i];
+				s.mesh.material = xray ? s.glass : s.opaque;
+				s.mesh.renderOrder = xray ? 6 : 0;   // glass after the brain it covers
+			}
+			// the lining is a backdrop for the brain; the fallback brain has none
+			for (var j = 0; j < fly.linings.length; j++) fly.linings[j].visible = xray && !!brain;
+			// legs and antennae stay dark but let the brain show through
+			fly.dark.transparent = xray;
+			fly.dark.opacity = xray ? 0.45 : 1;
+			fly.dark.depthWrite = !xray;
+			fly.dark.needsUpdate = true;
+			if (brain) brain.points.visible = xray;
+		}
+		applyXray();
+
+		// Places every neuron at its FlyWire position inside the head. data:
+		// {positions: parsed neuron_positions (original index order),
+		//  sortedToOriginal, regionType (worker order)}. Points are kept in a
+		// fixed shuffled order, so any prefix is an even sample of the whole
+		// brain; far away only a prefix is drawn.
+		// data null removes the brain (the fallback brain has no neurons to show).
+		function buildBrain(data) {
+			if (brain) {
+				fly.body.remove(brain.points);
+				pip.scene.remove(brain.pipPoints);
+				brain.geo.dispose();
+				brain = null;
+			}
+			if (!data) { applyXray(); return; }
+			var P = data.positions, s2o = data.sortedToOriginal, rt = data.regionType;
+			var n = P.neuronCount, f = [0, 0, 0];
+			var order = new Uint32Array(n), i;
+			for (i = 0; i < n; i++) order[i] = i;
+			var r = cosmeticRng(0x5eed);   // a fixed layout, independent of the run
+			for (i = n - 1; i > 0; i--) { var j = Math.floor(r() * (i + 1)), t = order[i]; order[i] = order[j]; order[j] = t; }
+			var slotOf = new Uint32Array(n);
+			var pos = new Float32Array(n * 3), col = new Uint8Array(n * 3), spike = new Float32Array(n);
+			for (var slot = 0; slot < n; slot++) {
+				var si = order[slot], o = s2o ? s2o[si] : si;
+				slotOf[si] = slot;
+				WB.brainFramePosition(P, o, f);
+				pos[slot * 3] = BRAIN_CENTER[0] + f[0] * BRAIN_WIDTH;
+				pos[slot * 3 + 1] = BRAIN_CENTER[1] + f[1] * BRAIN_WIDTH;
+				pos[slot * 3 + 2] = BRAIN_CENTER[2] + f[2] * BRAIN_WIDTH;
+				var c = REGION_RGB[rt ? rt[si] : 1] || REGION_RGB[1];
+				col[slot * 3] = c[0]; col[slot * 3 + 1] = c[1]; col[slot * 3 + 2] = c[2];
+				spike[slot] = -1e9;
+			}
+			var geo = track(new THREE.BufferGeometry());
+			geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+			geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3, true));
+			var spikeAttr = new THREE.BufferAttribute(spike, 1);
+			spikeAttr.setUsage(THREE.DynamicDrawUsage);
+			geo.setAttribute('aSpike', spikeAttr);
+			geo.computeBoundingSphere();
+			var points = new THREE.Points(geo, brainMat);
+			points.renderOrder = 5;
+			points.raycast = noRaycast;   // picking the fly uses its body
+			fly.body.add(points);
+			var pipPoints = new THREE.Points(geo, brainMat);
+			pipPoints.renderOrder = 5;
+			pipPoints.raycast = noRaycast;
+			pip.scene.add(pipPoints);
+			brain = { n: n, geo: geo, points: points, pipPoints: pipPoints, slotOf: slotOf, spike: spike, spikeAttr: spikeAttr,
+				lastFire: null, lastTime: 0, spikes: 0, spikeRate: 0 };
+			applyXray();
+		}
+
+		// Stamps the latest step's spikes with the current simulation time.
+		function updateBrain(state, info) {
+			if (!brain) return;
+			if (state.time < brain.lastTime - 1e-6) {
+				// a new run or a replay: forget the previous run's spikes
+				brain.spike.fill(-1e9);
+				brain.spikeAttr.needsUpdate = true;
+				brain.lastFire = null;
+			}
+			brain.lastTime = state.time;
+			var fire = info && info.fire;
+			if (xray && fire && fire !== brain.lastFire && fire.length === brain.n) {
+				brain.lastFire = fire;
+				var count = 0;
+				for (var i = 0; i < fire.length; i++) {
+					if (fire[i]) { brain.spike[brain.slotOf[i]] = state.time; count++; }
+				}
+				brain.spikes = count;
+				// smoothed so the firing gain below does not flicker per step
+				brain.spikeRate = brain.spikeRate ? brain.spikeRate + (count - brain.spikeRate) * 0.3 : count;
+				brain.spikeAttr.needsUpdate = true;
+			}
+			brainMat.uniforms.uTime.value = state.time;
+		}
+
+		// Level of detail and brightness for the brain's current size on
+		// screen: points shrink to a pixel far away, so fewer are drawn and
+		// each is brighter, keeping the glow the same at every zoom and every
+		// drawn point above the 8-bit blending floor. Firing neurons share a
+		// brightness budget, like auto-exposure: a few spikes flash at full
+		// brightness, a burst of thousands does not wash the brain out.
+		function prepareBrain(cam, viewH, center) {
+			var hDev = viewH * renderer.getPixelRatio();
+			var ppu;   // device pixels per BL at the brain
+			if (cam.isOrthographicCamera) ppu = hDev * cam.zoom / (cam.top - cam.bottom);
+			else ppu = hDev / (2 * Math.tan(cam.fov * Math.PI / 360) * Math.max(0.01, center.distanceTo(cam.position)));
+			var sPx = Math.max(1, NEURON_SIZE * ppu);
+			var area = BRAIN_WIDTH * 0.12 * 0.7 * ppu * ppu;
+			var m = Math.min(BRAIN_GLOW * area / (0.39 * MIN_POINT_GAIN * sPx * sPx), brainFragments / (0.8 * sPx * sPx));
+			m = Math.round(clamp(m, 400, brain.n));
+			brain.geo.setDrawRange(0, m);
+			brainMat.uniforms.uPx.value = hDev * 0.5;
+			brainMat.uniforms.uBase.value = clamp(BRAIN_GLOW * area / (0.39 * m * sPx * sPx), MIN_POINT_GAIN, 0.35);
+			// glowing points: ~2 steps of spikes decaying at once, drawn ~1.6x larger in area
+			var lit = Math.max(1, 2 * brain.spikeRate * m / brain.n);
+			brainMat.uniforms.uHot.value = clamp(SPIKE_GLOW * area / (0.39 * lit * sPx * sPx * 1.6), 0.08, 1);
+		}
+
+		var pipClear = new THREE.Color();
+		function renderPip(t) {
+			var r = pip.rect, h = canvas.clientHeight || root.innerHeight, w = canvas.clientWidth || root.innerWidth;
+			var yGl = h - (r.y + r.h);
+			// a slow sway shows depth without losing left and right
+			var a = 0.22 * Math.sin(t * 0.3);
+			pip.cam.position.set(BRAIN_CENTER[0] - Math.cos(a) * 0.46, BRAIN_CENTER[1] + 0.27, BRAIN_CENTER[2] + Math.sin(a) * 0.46);
+			pip.cam.lookAt(BRAIN_CENTER[0] + 0.02, BRAIN_CENTER[1] - 0.01, BRAIN_CENTER[2]);
+			pip.cam.aspect = r.w / r.h;
+			pip.cam.updateProjectionMatrix();
+			renderer.getClearColor(pipClear);
+			var alpha = renderer.getClearAlpha();
+			var hex = pipClear.getHex();
+			renderer.setScissorTest(true);
+			renderer.setScissor(r.x, yGl, r.w, r.h);
+			renderer.setViewport(r.x, yGl, r.w, r.h);
+			renderer.setClearColor(0x0b1224, 1);
+			prepareBrain(pip.cam, r.h, pip.center);
+			renderer.render(pip.scene, pip.cam);
+			renderer.setScissorTest(false);
+			renderer.setViewport(0, 0, w, h);
+			renderer.setClearColor(hex, alpha);
+		}
+
+		/* ---------- close views: orbit and look ---------- */
+
+		function updateCloseCamera(pose, dt) {
+			var h = pose.heading;
+			if (viewMode === 'closeup') {
+				close.heading = close.heading === null ? h : close.heading + normAngle(h - close.heading) * (1 - Math.exp(-dt / 0.6));
+				// zooming in moves the aim from the whole body to the brain
+				var near = clamp((close.dist - 0.35) / 1.6, 0, 1);
+				var lx = BRAIN_CENTER[0] * (1 - near), ly = BRAIN_CENTER[1] + (0.22 - BRAIN_CENTER[1]) * near;
+				var tx = pose.x + lx * Math.cos(h), ty = pose.y + ly, tz = pose.z - lx * Math.sin(h);
+				var cp = Math.cos(close.pitch);
+				var ox = -cp * Math.cos(close.yaw) * close.dist, oy = Math.sin(close.pitch) * close.dist, oz = -cp * Math.sin(close.yaw) * close.dist;
+				var c = Math.cos(close.heading), s = Math.sin(close.heading);
+				persp.position.set(clamp(tx + ox * c + oz * s, b.xMin + 0.4, b.xMax - 0.4),
+					clamp(ty + oy, 0.05, enc.roofHeight - 0.5),
+					clamp(tz - ox * s + oz * c, b.zMin + 0.4, b.zMax - 0.4));
+				persp.lookAt(tx, ty, tz);
+				persp.near = clamp(close.dist * 0.02, 0.004, 0.05);
+			} else if (viewMode === 'eyes') {
+				// The fly turns at up to ~650 deg/s in escapes (130 deg/s at the
+				// 90th percentile of normal walking). Two cascaded 0.12 s filters
+				// ease the view into and out of turns instead of snapping.
+				if (eyes.heading === null) { eyes.heading = h; eyes.heading1 = h; }
+				var ease = 1 - Math.exp(-dt / 0.12);
+				eyes.heading1 += normAngle(h - eyes.heading1) * ease;
+				eyes.heading += normAngle(eyes.heading1 - eyes.heading) * ease;
+				var he = eyes.heading;
+				var ex = pose.x + 0.42 * Math.cos(he), ey = pose.y + 0.31, ez = pose.z - 0.42 * Math.sin(he);
+				if (!look.drag && performance.now() - look.releasedAt > 1500) {
+					var relax = Math.exp(-dt / 0.8);
+					eyes.yaw *= relax;
+					eyes.pitch *= relax;
+				}
+				var yaw = he + eyes.yaw, pitch = -0.08 + eyes.pitch, cpp = Math.cos(pitch);
+				persp.position.set(ex, ey, ez);
+				persp.lookAt(ex + cpp * Math.cos(yaw), ey + Math.sin(pitch), ez - cpp * Math.sin(yaw));
+				persp.near = 0.03;
+			}
+			persp.updateProjectionMatrix();
+		}
+
+		// Eyes: vertical FOV from the chosen horizontal FOV, so wide screens
+		// see ~110 degrees around the fly (the real eyes cover ~330).
+		function applyFov() {
+			var w = canvas.clientWidth || root.innerWidth, h = canvas.clientHeight || root.innerHeight;
+			persp.fov = viewMode === 'eyes' ? clamp(2 * Math.atan(Math.tan(eyes.hfov * Math.PI / 360) * h / w) * 180 / Math.PI, 40, 100) : 45;
+			persp.updateProjectionMatrix();
+		}
+
+		// Drag orbits (close-up) or looks around (eyes, grab-the-world like a
+		// street panorama); a second finger pinches to zoom. Clicks still reach
+		// the tools, which ignore anything that moved.
+		var look = { pointers: {}, drag: null, pinch: 0, releasedAt: -1e9 };
+		function pinchSpan() {
+			var ids = Object.keys(look.pointers);
+			if (ids.length < 2) return 0;
+			var a = look.pointers[ids[0]], c = look.pointers[ids[1]];
+			return Math.hypot(a.x - c.x, a.y - c.y);
+		}
+		function onLookDown(e) {
+			if (viewMode === 'garden') return;
+			look.pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+			if (Object.keys(look.pointers).length >= 2) { look.drag = null; look.pinch = pinchSpan(); }
+			else if (panEnabled) look.drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+		}
+		function onLookMove(e) {
+			var p = look.pointers[e.pointerId];
+			if (!p) return;
+			p.x = e.clientX; p.y = e.clientY;
+			if (viewMode === 'garden' || !panEnabled) return;
+			if (look.pinch) {
+				var span = pinchSpan();
+				if (span > 0) api.zoomBy(span / look.pinch);
+				look.pinch = span;
+				return;
+			}
+			var d = look.drag;
+			if (!d || d.id !== e.pointerId) return;
+			var dx = e.clientX - d.x, dy = e.clientY - d.y;
+			d.x = e.clientX; d.y = e.clientY;
+			var hpx = canvas.clientHeight || 600;
+			if (viewMode === 'closeup') {
+				close.yaw = normAngle(close.yaw + dx * 5 / hpx);
+				close.pitch = clamp(close.pitch + dy * 5 / hpx, -0.35, 1.45);
+			} else {
+				var k = persp.fov * Math.PI / 180 / hpx;
+				eyes.yaw = clamp(eyes.yaw + dx * k, -2.6, 2.6);
+				eyes.pitch = clamp(eyes.pitch + dy * k, -1.1, 1.1);
+			}
+		}
+		function onLookUp(e) {
+			if (!look.pointers[e.pointerId]) return;
+			delete look.pointers[e.pointerId];
+			if (look.drag && look.drag.id === e.pointerId) { look.drag = null; look.releasedAt = performance.now(); }
+			if (Object.keys(look.pointers).length < 2) look.pinch = 0;
+		}
+		function onLookWheel(e) {
+			if (viewMode === 'garden') return;
+			e.preventDefault();
+			api.zoomBy(Math.exp(-e.deltaY * 0.0015));
+		}
+		function onContextMenu(e) { if (viewMode !== 'garden') e.preventDefault(); }
+		canvas.addEventListener('pointerdown', onLookDown);
+		root.addEventListener('pointermove', onLookMove);
+		root.addEventListener('pointerup', onLookUp);
+		root.addEventListener('pointercancel', onLookUp);
+		canvas.addEventListener('wheel', onLookWheel, { passive: false });
+		canvas.addEventListener('contextmenu', onContextMenu);
 
 		/* ---------- overlays ---------- */
 
@@ -775,8 +1262,10 @@
 		var scentTex = track(new THREE.DataTexture(scentData, scentW, scentH, THREE.RGBAFormat));
 		scentTex.magFilter = THREE.LinearFilter;
 		scentTex.minFilter = THREE.LinearFilter;
+		// polygon offset keeps the layer above the ground in the close views,
+		// whose near plane is small
 		var scentMesh = new THREE.Mesh(track(new THREE.PlaneGeometry(b.xMax - b.xMin, b.zMax - b.zMin)),
-			track(new THREE.MeshBasicMaterial({ map: scentTex, transparent: true, depthWrite: false })));
+			track(new THREE.MeshBasicMaterial({ map: scentTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 })));
 		scentMesh.rotation.x = -Math.PI / 2;
 		scentMesh.position.set(cx, 0.08, cz);
 		scentMesh.visible = false;
@@ -906,20 +1395,29 @@
 
 		var camDir = new THREE.Vector3();
 		function updateWalls() {
-			camDir.copy(camera.position).sub(controls.target);
-			camDir.y = 0;
-			camDir.normalize();
+			// the overview fades walls between camera and garden; the close
+			// views are inside the garden, where every wall stands
+			var overview = viewMode === 'garden';
+			if (overview) {
+				camDir.copy(camera.position).sub(controls.target);
+				camDir.y = 0;
+				camDir.normalize();
+			}
 			for (var i = 0; i < walls.length; i++) {
 				var w = walls[i];
-				var facing = w.userData.outward.dot(camDir);
-				var target = facing > 0.25 ? 0.14 : 1;
+				var target = overview && w.userData.outward.dot(camDir) > 0.25 ? 0.14 : 1;
 				w.material.opacity += (target - w.material.opacity) * 0.15;
 				w.material.depthWrite = w.material.opacity > 0.9;
 				w.castShadow = w.material.opacity > 0.9;
 			}
-			// thin canopies when zoomed in so the fly stays visible below
-			var canopyOpacity = camera.zoom > 3 ? 0.35 : 1;
+			// thin canopies when zoomed in so the fly stays visible below, or
+			// when the close-up camera rises into one
+			var p = persp.position;
 			for (var c = 0; c < canopyMeshes.length; c++) {
+				var t = canopyMeshes[c].userData.tree;
+				var thin = overview ? camera.zoom > 3 :
+					viewMode === 'closeup' && Math.hypot(p.x - t.x, p.z - t.z) < t.canopyRadius * 1.1 && p.y > t.canopyY - t.canopyRadius * 0.6;
+				var canopyOpacity = thin ? 0.35 : 1;
 				var mat = canopyMeshes[c].material;
 				if (mat.opacity !== canopyOpacity) { mat.transparent = canopyOpacity < 1; mat.opacity = canopyOpacity; }
 			}
@@ -934,6 +1432,23 @@
 			hemi.intensity = 0.18 + 0.4 * dayness;
 			hemi.color.setRGB(0.55 + 0.36 * dayness, 0.6 + 0.35 * dayness, 0.85 + 0.15 * dayness);
 			renderer.setClearColor(new THREE.Color(0.08 + 0.1 * dayness, 0.08 + 0.1 * dayness, 0.1 + 0.06 * dayness));
+			skyMat.uniforms.uZenith.value.setRGB(0.04 + 0.4 * dayness, 0.05 + 0.56 * dayness, 0.09 + 0.71 * dayness);
+			skyMat.uniforms.uHorizon.value.setRGB(0.1 + 0.69 * dayness, 0.11 + 0.72 * dayness, 0.13 + 0.68 * dayness);
+			for (var k in fly.glass) fly.glass[k].uniforms.uLight.value = dayness;
+			applyFog();
+		}
+
+		function applyFog() {
+			if (viewMode === 'garden') {
+				scene.fog.color.setHex(0x3a3a30);
+				scene.fog.near = 180;
+				scene.fog.far = 320;
+			} else {
+				// haze toward the horizon gives the fly-scale garden depth
+				scene.fog.color.copy(skyMat.uniforms.uHorizon.value);
+				scene.fog.near = 45;
+				scene.fog.far = 280;
+			}
 		}
 
 		/* ---------- frame ---------- */
@@ -949,10 +1464,13 @@
 			syncFruit(state);
 			syncWebs(state, now);
 			animateFly(state, pose, dt, now);
+			brainWorld.set(BRAIN_CENTER[0], BRAIN_CENTER[1], BRAIN_CENTER[2]).applyAxisAngle(yAxis, pose.heading).add(fly.root.position);
+			updateBrain(state, info);
 			if (overlays.trail) updateTrail(state);
 			trailLine.visible = overlays.trail;
-			dangerGroup.visible = overlays.danger;
-			if (overlays.danger) updateDanger(state, info);
+			// in the eyes view the wedge would start at the camera
+			dangerGroup.visible = overlays.danger && viewMode !== 'eyes';
+			if (dangerGroup.visible) updateDanger(state, info);
 			neural.visible = overlays.neural;
 			if (overlays.neural) updateNeural(pose, info);
 			scentMesh.visible = overlays.scent;
@@ -968,13 +1486,26 @@
 				controls.target.add(delta);
 				camera.position.add(delta);
 			}
+			if (viewMode !== 'garden') updateCloseCamera(pose, dt);
 		};
 
+		// Draw calls and triangles of the last frame's garden pass plus the
+		// brain inset (three.js counts each render call on its own).
+		var frameInfo = { calls: 0, triangles: 0 };
 		api.render = function () {
 			if (suspended) return;
-			controls.update();
+			var cam = activeCamera();
+			if (viewMode === 'garden') controls.update();
 			updateWalls();
-			renderer.render(scene, camera);
+			if (brain && xray && viewMode !== 'eyes') prepareBrain(cam, canvas.clientHeight || root.innerHeight, brainWorld);
+			renderer.render(scene, cam);
+			frameInfo.calls = renderer.info.render.calls;
+			frameInfo.triangles = renderer.info.render.triangles;
+			if (viewMode === 'eyes' && brain && xray && pip.rect) {
+				renderPip(performance.now() / 1000);
+				frameInfo.calls += renderer.info.render.calls;
+				frameInfo.triangles += renderer.info.render.triangles;
+			}
 		};
 
 		/* ---------- picking and projections ---------- */
@@ -984,7 +1515,7 @@
 		function setNdc(clientX, clientY) {
 			var r = canvas.getBoundingClientRect();
 			ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
-			raycaster.setFromCamera(ndc, camera);
+			raycaster.setFromCamera(ndc, activeCamera());
 		}
 
 		api.screenToGround = function (clientX, clientY) {
@@ -1000,7 +1531,8 @@
 
 		api.pick = function (clientX, clientY) {
 			setNdc(clientX, clientY);
-			var targets = [fly.root];
+			// in the eyes view the (hidden) fly surrounds the camera
+			var targets = viewMode === 'eyes' ? [] : [fly.root];
 			for (var id in fruitMeshes) targets.push(fruitMeshes[id]);
 			for (var wid in webObjs) targets.push(webObjs[wid].disk);
 			var hits = raycaster.intersectObjects(targets, true);
@@ -1018,34 +1550,81 @@
 
 		var proj = new THREE.Vector3();
 		api.worldToScreen = function (x, y, z) {
-			proj.set(x, y, z).project(camera);
+			proj.set(x, y, z).project(activeCamera());
 			var r = canvas.getBoundingClientRect();
 			return { x: r.left + (proj.x + 1) / 2 * r.width, y: r.top + (1 - proj.y) / 2 * r.height, visible: proj.z < 1 && proj.z > -1 };
 		};
 
 		/* ---------- camera API ---------- */
 
+		// Following is an overview behavior; asking for it leaves a close view.
 		api.setFollow = function (on) {
 			follow = !!on;
+			if (follow && viewMode !== 'garden') api.setViewMode('garden');
 			if (follow && camera.zoom < 4) { camera.zoom = 4.5; camera.updateProjectionMatrix(); }
 		};
 		api.isFollowing = function () { return follow; };
-		api.resetCamera = function () { follow = false; resetCamera(); };
+		api.resetCamera = function () {
+			follow = false;
+			close.yaw = CLOSE_HOME.yaw; close.pitch = CLOSE_HOME.pitch; close.dist = CLOSE_HOME.dist;
+			eyes.hfov = 110;
+			api.setViewMode('garden');
+			resetCamera();
+		};
+		// Overview: orthographic zoom. Close-up: distance to the fly. Eyes:
+		// field of view.
 		api.zoomBy = function (f) {
+			if (viewMode === 'closeup') { close.dist = clamp(close.dist / f, 0.22, 14); return; }
+			if (viewMode === 'eyes') { eyes.hfov = clamp(eyes.hfov / f, 50, 140); applyFov(); return; }
 			camera.zoom = clamp(camera.zoom * f, controls.minZoom, controls.maxZoom);
 			camera.updateProjectionMatrix();
 		};
+		api.setViewMode = function (mode) {
+			if (mode !== 'closeup' && mode !== 'eyes') mode = 'garden';
+			if (mode === viewMode) return;
+			viewMode = mode;
+			controls.enabled = panEnabled && mode === 'garden';
+			close.heading = null;
+			eyes.heading = null;
+			eyes.yaw = 0;
+			eyes.pitch = 0;
+			look.drag = null;
+			look.pinch = 0;
+			sky.visible = mode !== 'garden';
+			applyFog();
+			api.resize();
+		};
+		api.viewMode = function () { return viewMode; };
 		api.setOverlay = function (name, on) { overlays[name] = !!on; };
 		api.overlays = function () { return overlays; };
 		api.select = function (sel) { selection = sel; };
 		api.clearTrail = function () { trail = []; };
 		api.controls = controls;
 		api.camera = camera;
+		api.activeCamera = activeCamera;
+
+		api.setBrain = buildBrain;
+		api.setXray = function (on) { xray = !!on; applyXray(); };
+		api.xray = function () { return xray; };
+		// Spikes are display-only: requesting them never changes the worker's
+		// dynamics, only what its step result carries.
+		api.wantsFireState = function () { return xray && !!brain; };
+		api.brainInfo = function () {
+			return brain ? { neurons: brain.n, drawn: brain.geo.drawRange.count, spikes: brain.spikes, visible: xray } : null;
+		};
+		// The eyes view's brain inset, in CSS pixels from the canvas top-left.
+		api.pipRect = function () { return viewMode === 'eyes' && brain && xray ? pip.rect : null; };
 
 		// Screen insets (px) covered by the toolbar and bottom panel; the
-		// overview is fitted to the band between them.
-		var insets = { top: 0, bottom: 0 };
-		api.setInsets = function (top, bottom) { insets.top = top || 0; insets.bottom = bottom || 0; api.resize(); };
+		// overview is fitted to the band between them. pipBottom: space to
+		// keep clear under the brain inset (defaults to the bottom inset).
+		var insets = { top: 0, bottom: 0, pip: 0 };
+		api.setInsets = function (top, bottom, pipBottom) {
+			insets.top = top || 0;
+			insets.bottom = bottom || 0;
+			insets.pip = Math.max(insets.bottom, pipBottom || 0);
+			api.resize();
+		};
 
 		api.resize = function () {
 			var w = canvas.clientWidth || root.innerWidth, h = canvas.clientHeight || root.innerHeight;
@@ -1060,20 +1639,38 @@
 			// the middle of the visible band
 			camera.setViewOffset(w, h, 0, (insets.bottom - insets.top) / 2, w, h);
 			camera.updateProjectionMatrix();
+			persp.aspect = w / h;
+			persp.setViewOffset(w, h, 0, (insets.bottom - insets.top) / 2, w, h);
+			applyFov();
+			// brain inset: bottom-left of the visible band, clear of the
+			// right-hand controls
+			var pw = Math.round(clamp(w * 0.24, 150, 300)), ph = Math.round(pw * 0.72);
+			pip.rect = { x: 12, y: Math.max(insets.top + 8, Math.round(h - insets.pip - 12 - ph)), w: pw, h: ph };
 		};
 
 		api.suspend = function (on) { suspended = !!on; };
-		api.setPanEnabled = function (on) { controls.enabled = !!on; };
+		api.setPanEnabled = function (on) {
+			panEnabled = !!on;
+			controls.enabled = panEnabled && viewMode === 'garden';
+			if (!panEnabled) look.drag = null;
+		};
 		// Reduce visual quality before touching simulation dynamics.
 		api.setQuality = function (level) {
 			var lite = level === 'lite';
 			renderer.setPixelRatio(lite ? 1 : Math.min(root.devicePixelRatio || 1, cfg.render.maxPixelRatio));
 			sun.castShadow = !lite;
+			brainFragments = lite ? 3e6 : 24e6;
 			api.resize();
 		};
 
 		api.dispose = function () {
 			controls.dispose();
+			canvas.removeEventListener('pointerdown', onLookDown);
+			root.removeEventListener('pointermove', onLookMove);
+			root.removeEventListener('pointerup', onLookUp);
+			root.removeEventListener('pointercancel', onLookUp);
+			canvas.removeEventListener('wheel', onLookWheel);
+			canvas.removeEventListener('contextmenu', onContextMenu);
 			for (var id in fruitMeshes) scene.remove(fruitMeshes[id]);
 			for (var wid in webObjs) { webObjs[wid].geo.dispose(); webObjs[wid].ageo.dispose(); webObjs[wid].disk.geometry.dispose(); }
 			for (var did in dangerMeshes) { dangerMeshes[did].geometry.dispose(); dangerMeshes[did].material.dispose(); }
@@ -1087,7 +1684,7 @@
 			canvas.addEventListener('webglcontextrestored', function () { restored(); }, false);
 		};
 
-		api.stats = function () { return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }; };
+		api.stats = function () { return { calls: frameInfo.calls, triangles: frameInfo.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures }; };
 
 		resetCamera();
 		api.resize();

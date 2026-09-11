@@ -45,14 +45,17 @@ targets:
           mkdir -p "${DEST}/svg"
           rsync -a --delete "${WEB_ROOT}/svg/" "${DEST}/svg/"
 
-          # Copy data/ (connectome binary, group metadata and the paired neuron
-          # sidecar -- exclude large CSVs). The sidecar must match the binary;
-          # regenerate both with scripts/ if either changes.
+          # Copy data/ (connectome binary, group metadata, the paired neuron
+          # sidecar and neuron positions -- exclude large CSVs). Sidecar and
+          # positions must match the binary; regenerate them with scripts/ if
+          # it changes.
           mkdir -p "${DEST}/data"
           cp "${WEB_ROOT}/data/connectome.bin.gz" "${DEST}/data/connectome.bin.gz"
           cp "${WEB_ROOT}/data/neuron_meta.json" "${DEST}/data/neuron_meta.json"
           cp "${WEB_ROOT}/data/neuron_sidecar.bin.gz" "${DEST}/data/neuron_sidecar.bin.gz"
           cp "${WEB_ROOT}/data/neuron_sidecar.json" "${DEST}/data/neuron_sidecar.json"
+          cp "${WEB_ROOT}/data/neuron_positions.bin.gz" "${DEST}/data/neuron_positions.bin.gz"
+          cp "${WEB_ROOT}/data/neuron_positions.json" "${DEST}/data/neuron_positions.json"
 
           echo "Web assets copied to ${DEST}"
         basedOnDependencyAnalysis: false

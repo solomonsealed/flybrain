@@ -1,0 +1,31 @@
+{
+  "format": "flybrain-neuron-positions",
+  "version": 1,
+  "neuron_count": 139255,
+  "index_order": "original connectome.bin order (neurons.csv.gz row order); the worker's stable group sort is applied at load via sortedToOriginal",
+  "units": "nm",
+  "source": "FlyWire Codex coordinates.csv (FAFB v783), first listed point per root_id",
+  "bounds_nm": {
+    "min": [
+      87624,
+      51360,
+      640
+    ],
+    "max": [
+      901124,
+      442888,
+      279120
+    ]
+  },
+  "axes": {
+    "x": "medio-lateral; neurons annotated side=left have smaller x (FAFB image space is mirrored)",
+    "y": "dorso-ventral; increases ventrally",
+    "z": "antero-posterior; increases posteriorly"
+  },
+  "quantization": "uint16 per axis over bounds_nm",
+  "display_only": true,
+  "hashes": {
+    "connectome.bin.gz": "fbf8d440ca1207c7573e1acdd2366f9d0beb9b533c1710f21681264f81b1cc49",
+    "neuron_positions.bin.gz": "e139578848acd71b8bfa99833a3ffe231909d700faf0cc36f569ac1371e3b719"
+  }
+}
