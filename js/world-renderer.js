@@ -15,12 +15,18 @@
  * its FlyWire position inside the head, lit when it fires. Positions and
  * spikes are display-only.
  *
+ * Several flies: the focused fly (info.focusId) is the full model with the
+ * X-ray brain and the close views; every other adult is drawn instanced, and
+ * eggs, larvae and pupae are drawn from one instanced mesh.
+ *
  * API (shared with world-renderer-2d.js):
  *   create(canvas, config, state) -> renderer | throws if WebGL unavailable
  *   renderer.sync(state, pose, info)   update dynamic objects for this frame;
- *                                      info.fire: the latest worker fire state
+ *                                      pose: the focused fly's interpolated pose;
+ *                                      info.focusId, info.poseOf(rec) (any fly),
+ *                                      info.senses / motor / fire: the focused fly's
  *   renderer.render()
- *   renderer.pick(clientX, clientY)    -> {type, id, x, z} | null
+ *   renderer.pick(clientX, clientY)    -> {type: fly|brood|fruit|web|ground, id, x, z} | null
  *   renderer.screenToGround(cx, cy)    -> {x, z} | null
  *   renderer.worldToScreen(x, y, z)    -> {x, y, visible}
  *   renderer.setFollow(on), resetCamera(), zoomBy(f), setOverlay(name, on),
@@ -45,7 +51,8 @@
 
 	var BEHAVIOR_COLORS = {
 		walk: [0.55, 0.8, 1.0], feed: [1.0, 0.8, 0.25], startle: [1.0, 0.35, 0.3], fly: [0.85, 0.55, 1.0],
-		groom: [0.6, 1.0, 0.6], rest: [0.6, 0.6, 0.7], idle: [0.75, 0.75, 0.75], brace: [0.6, 0.9, 0.9], snagged: [1.0, 0.2, 0.6]
+		groom: [0.6, 1.0, 0.6], rest: [0.6, 0.6, 0.7], idle: [0.75, 0.75, 0.75], brace: [0.6, 0.9, 0.9], snagged: [1.0, 0.2, 0.6],
+		court: [1.0, 0.55, 0.8], accept: [1.0, 0.75, 0.85], copulate: [0.95, 0.45, 0.65], oviposit: [0.8, 0.95, 0.5]
 	};
 
 	/* ---------- X-ray fly: glass body and the brain inside ---------- */
@@ -737,22 +744,42 @@
 		}
 		var hotWebMat = track(new THREE.LineBasicMaterial({ color: 0xffd0d0, transparent: true, opacity: 1 }));
 
-		/* ---------- the fly ---------- */
+		/* ---------- the flies ---------- */
 
+		// The focused fly is drawn with the full articulated model (a "hero"):
+		// glass body in X-ray, the brain inside its head, the close-up and eyes
+		// views. There is one hero per sex; the one matching the focused fly is
+		// shown. Every other adult is drawn from shared instanced meshes (the
+		// crowd) posed by a rig: an unattached copy of the same model animated
+		// for each fly in turn, whose part transforms are copied into the
+		// instances. The draw-call count stays flat however many flies live.
+		// Males are smaller, with a dark, rounded abdomen tip.
+		var MALE_SCALE = 0.88;
+		var SEX_RING = { female: 0xffc2d6, male: 0x9cc9ff };
 		var whiteTex = track(new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat));
 		whiteTex.needsUpdate = true;
-		var fly = buildFly();
-		scene.add(fly.root);
+		var heroes = { female: buildFly('female', true), male: buildFly('male', true) };
+		var fly = heroes.female;
+		heroes.male.root.visible = false;
+		heroes.male.marker.visible = false;
 
-		function buildFly() {
+		function buildFly(sex, inScene) {
+			var male = sex === 'male';
 			var rootG = new THREE.Group();
 			var body = new THREE.Group();
 			rootG.add(body);
+			if (male) rootG.scale.setScalar(MALE_SCALE);
 			var mThorax = track(new THREE.MeshStandardMaterial({ color: 0x8b6914, roughness: 0.55 }));
+			// abdomen bands; the texture's top rows wrap the abdomen's tip
 			var stripeTex = canvasTexture(64, 128, function (g, w, h) {
 				g.fillStyle = '#c28f1f'; g.fillRect(0, 0, w, h);
 				g.fillStyle = '#5a3d0a';
-				for (var i = 0; i < 5; i++) g.fillRect(0, 30 + i * 17, w, 7);
+				if (male) {
+					g.fillRect(0, 0, w, 44);
+					for (var m = 0; m < 3; m++) g.fillRect(0, 58 + m * 17, w, 7);
+				} else {
+					for (var i = 0; i < 5; i++) g.fillRect(0, 30 + i * 17, w, 7);
+				}
 			});
 			var mAbd = track(new THREE.MeshStandardMaterial({ map: stripeTex, roughness: 0.6 }));
 			var mEye = track(new THREE.MeshStandardMaterial({ color: 0xb3121a, roughness: 0.3, emissive: 0x3a0000 }));
@@ -788,8 +815,8 @@
 			thorax.position.set(0.08, 0.26, 0);
 			body.add(thorax);
 			var abdomen = shell(new THREE.Mesh(abdGeo, mAbd), mAbd, glass.abdomen);
-			abdomen.scale.set(0.27, 0.14, 0.15);
-			abdomen.position.set(-0.24, 0.24, 0);
+			if (male) { abdomen.scale.set(0.21, 0.135, 0.145); abdomen.position.set(-0.19, 0.245, 0); }
+			else { abdomen.scale.set(0.27, 0.14, 0.15); abdomen.position.set(-0.24, 0.24, 0); }
 			body.add(abdomen);
 			var head = shell(new THREE.Mesh(sph, mThorax), mThorax, glass.head);
 			head.scale.set(0.09, 0.1, 0.12);
@@ -866,9 +893,9 @@
 				body.add(hip);
 				legs.push({ hip: hip, side: s, pair: pair, baseYaw: hip.rotation.y });
 			}
-			// marker ring and blob shadow (always drawn, for findability)
+			// marker ring (colored by sex) and blob shadow, always drawn, for findability
 			var ring = new THREE.Mesh(track(new THREE.RingGeometry(0.9, 1.05, 32)),
-				track(new THREE.MeshBasicMaterial({ color: 0xfff3c4, transparent: true, opacity: 0.55, depthWrite: false })));
+				track(new THREE.MeshBasicMaterial({ color: SEX_RING[sex] || 0xfff3c4, transparent: true, opacity: 0.55, depthWrite: false })));
 			ring.rotation.x = -Math.PI / 2;
 			ring.position.y = 0.04;
 			var shadowTex = canvasTexture(64, 64, function (g) {
@@ -881,11 +908,145 @@
 			blob.position.y = 0.03;
 			var marker = new THREE.Group();
 			marker.add(ring); marker.add(blob);
-			scene.add(marker);
+			if (inScene) { scene.add(rootG); scene.add(marker); }
 			rootG.userData.pick = { type: 'fly' };
-			return { root: rootG, body: body, antennae: antennae, prob: prob, wings: wings, legs: legs, marker: marker, ring: ring, blob: blob,
-				head: head, eyes: eyes, shells: shells, glass: glass, linings: linings, lining: lining, dark: mDark,
-				walkPhase: 0, twitchT: 0, twitch: [0, 0], twitchTarget: [0, 0], probExt: 0, spread: 0 };
+			return { sex: sex, root: rootG, body: body, antennae: antennae, prob: prob, wings: wings, legs: legs, marker: marker, ring: ring, blob: blob,
+				head: head, eyes: eyes, abdomen: abdomen, abdomenTilt: 0, shells: shells, glass: glass, linings: linings, lining: lining, dark: mDark };
+		}
+
+		// Shows the hero for the focused fly's sex, moving the brain into it.
+		function setHero(sex) {
+			var next = heroes[sex] || heroes.female;
+			if (next === fly) return;
+			fly.root.visible = false;
+			fly.marker.visible = false;
+			if (brain) { fly.body.remove(brain.points); next.body.add(brain.points); }
+			fly = next;
+		}
+
+		// Cosmetic animation state per fly (gait phase, wing spread, antenna
+		// twitches), kept across focus changes.
+		var anims = {};
+		function animOf(id) {
+			return anims[id] || (anims[id] = { walkPhase: 0, twitchT: 0, twitch: [0, 0], twitchTarget: [0, 0], probExt: 0, spread: 0, tilt: 0, sing: 0 });
+		}
+
+		// The crowd: one instanced mesh per (geometry, material) pair of a rig.
+		var rigs = { female: buildFly('female', false), male: buildFly('male', false) };
+		var crowd = { female: buildCrowd(rigs.female), male: buildCrowd(rigs.male) };
+		function buildCrowd(rig) {
+			var groups = [], byKey = {}, parts = [];
+			function add(o, marker) {
+				if (!o.isMesh || rig.linings.indexOf(o) !== -1) return;
+				var key = o.geometry.uuid + ':' + o.material.uuid;
+				var g = byKey[key];
+				if (!g) { g = byKey[key] = { geometry: o.geometry, material: o.material, perFly: 0, n: 0, marker: marker, ring: o === rig.ring }; groups.push(g); }
+				g.perFly++;
+				parts.push({ mesh: o, group: g });
+			}
+			rig.body.traverse(function (o) { add(o, false); });
+			rig.marker.traverse(function (o) { add(o, true); });
+			groups.forEach(function (g) {
+				var inst = new THREE.InstancedMesh(g.geometry, g.material, g.perFly * cfg.population.max);
+				inst.count = 0;
+				inst.frustumCulled = false;
+				inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+				inst.renderOrder = g.marker ? 0 : 1;
+				inst.userData.pick = { type: 'fly' };
+				inst.userData.ids = [];
+				scene.add(inst);
+				g.inst = inst;
+			});
+			return { rig: rig, groups: groups, parts: parts };
+		}
+
+		function syncCrowd(state, info, focusId, dt, t) {
+			var sexes = ['female', 'male'], s, i;
+			for (s = 0; s < 2; s++) crowd[sexes[s]].groups.forEach(function (g) { g.n = 0; });
+			for (i = 0; i < state.flies.length; i++) {
+				var rec = state.flies[i];
+				if (rec.id === focusId) continue;
+				var c = crowd[rec.sex] || crowd.female;
+				animateModel(c.rig, rec, info && info.poseOf ? info.poseOf(rec) : rec.fly, dt, t, animOf(rec.id), state);
+				c.rig.root.updateMatrixWorld(true);
+				c.rig.marker.updateMatrixWorld(true);
+				for (var p = 0; p < c.parts.length; p++) {
+					var g = c.parts[p].group;
+					g.inst.setMatrixAt(g.n, c.parts[p].mesh.matrixWorld);
+					g.inst.userData.ids[g.n] = rec.id;
+					g.n++;
+				}
+			}
+			for (s = 0; s < 2; s++) {
+				crowd[sexes[s]].groups.forEach(function (g) {
+					g.inst.count = g.n;
+					g.inst.instanceMatrix.needsUpdate = true;
+					g.inst.visible = g.n > 0 && (!g.marker || !g.ring || viewMode === 'garden');
+				});
+				rigs[sexes[s]].ring.material.opacity = fly.ring.material.opacity;
+			}
+		}
+
+		/* ---------- eggs, larvae and pupae ---------- */
+
+		var BROOD_COLORS = { egg: new THREE.Color(0xf7f3e8), larva: new THREE.Color(0xf1e6c8), pupaNew: new THREE.Color(0xa8702e), pupaOld: new THREE.Color(0x4e2c10) };
+		var broodInst = new THREE.InstancedMesh(track(new THREE.SphereGeometry(1, 12, 8)),
+			track(new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55 })), cfg.population.max);
+		broodInst.count = 0;
+		broodInst.frustumCulled = false;
+		broodInst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+		// sized for every slot (setColorAt would size it from the current count, 0)
+		broodInst.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cfg.population.max * 3), 3);
+		broodInst.instanceColor.setUsage(THREE.DynamicDrawUsage);
+		broodInst.userData.pick = { type: 'brood' };
+		broodInst.userData.ids = [];
+		scene.add(broodInst);
+		var broodM = new THREE.Matrix4(), broodQ = new THREE.Quaternion(), broodP = new THREE.Vector3(), broodS = new THREE.Vector3(), broodC = new THREE.Color();
+		var broodUp = new THREE.Vector3(0, 1, 0);
+
+		// Eggs sit half-sunk in the fruit's skin on the side the mother stood;
+		// larvae crawl over the fruit and grow; pupae lie on the ground beside
+		// it and darken. Sizes are close to real (a grown larva is longer than
+		// the adult's body). Without its fruit (eaten or removed) the young
+		// stay where they were, on the ground.
+		function onFruit(state, e, lat, lon) {
+			var f = e.fruitId ? WS.findById(state.fruits, e.fruitId) : null;
+			if (!f || f.stage === 'attached') { broodP.set(e.x, 0.06, e.z); return; }
+			var r = f.radius * Math.max(0.35, Math.cbrt(Math.max(0.05, f.amount)));
+			var a = Math.atan2(e.dirZ, e.dirX) + lon;
+			broodP.set(f.x + Math.cos(a) * Math.cos(lat) * r * 1.01, r * 0.8 + Math.sin(lat) * r * 0.86, f.z + Math.sin(a) * Math.cos(lat) * r * 1.01);
+		}
+		function syncBrood(state, t) {
+			var lc = cfg.lifecycle, n = 0;
+			for (var i = 0; i < state.brood.length && n < cfg.population.max; i++) {
+				var e = state.brood[i], age = state.time - e.stageTime, h = e.heading;
+				if (e.stage === 'egg') {
+					onFruit(state, e, 0.15, 0);
+					broodS.set(0.14, 0.07, 0.07);
+					broodC.copy(BROOD_COLORS.egg);
+				} else if (e.stage === 'larva') {
+					var len = 0.35 + 0.95 * clamp(age / lc.larvaDuration, 0, 1);
+					var ph = t * 0.35 + i * 1.7;
+					onFruit(state, e, 0.25 + 0.25 * Math.sin(ph * 0.7), 0.6 * Math.sin(ph));
+					h += 0.6 * Math.sin(t * 3 + i);
+					broodS.set(len / 2, 0.045 + 0.05 * len, 0.045 + 0.05 * len);
+					broodC.copy(BROOD_COLORS.larva);
+				} else {
+					broodP.set(e.x, 0.13, e.z);
+					broodS.set(0.6, 0.2, 0.22);
+					broodC.copy(BROOD_COLORS.pupaNew).lerp(BROOD_COLORS.pupaOld, clamp(age / (lc.pupaDuration * 0.5), 0, 1));
+				}
+				broodQ.setFromAxisAngle(broodUp, h);
+				broodM.compose(broodP, broodQ, broodS);
+				broodInst.setMatrixAt(n, broodM);
+				broodInst.setColorAt(n, broodC);
+				broodInst.userData.ids[n] = e.id;
+				n++;
+			}
+			broodInst.count = n;
+			broodInst.visible = n > 0;
+			broodInst.instanceMatrix.needsUpdate = true;
+			if (broodInst.instanceColor) broodInst.instanceColor.needsUpdate = true;
 		}
 
 		function glassMaterial(o) {
@@ -904,62 +1065,81 @@
 		}
 
 		var crand = cosmeticRng((state.cosmeticSeed ^ 0xa5a5a5) >>> 0);
-		function animateFly(state, pose, dt, t) {
-			var f = state.fly, bh = state.behavior.current;
-			fly.root.position.set(pose.x, pose.y, pose.z);
-			fly.root.rotation.y = pose.heading;
+		// Poses `model` for fly `rec` at `pose`; `a` is its animation state.
+		function animateModel(model, rec, pose, dt, t, a, state) {
+			var f = rec.fly, bh = rec.behavior.current;
+			model.root.position.set(pose.x, pose.y, pose.z);
+			model.root.rotation.y = pose.heading;
 			var flying = f.mode === 'air';
+			var riding = bh === 'copulate' && rec.sex === 'male';
 			// legs: tripod gait advanced by walking speed
 			var walking = !flying && f.speed > 0.05;
-			fly.walkPhase += f.speed * dt * 9;
-			for (var i = 0; i < fly.legs.length; i++) {
-				var L = fly.legs[i];
+			a.walkPhase += f.speed * dt * 9;
+			for (var i = 0; i < model.legs.length; i++) {
+				var L = model.legs[i];
 				var tripodA = (i === 0 || i === 3 || i === 4);
-				var ph = fly.walkPhase + (tripodA ? 0 : Math.PI);
+				var ph = a.walkPhase + (tripodA ? 0 : Math.PI);
 				var swing = walking ? Math.sin(ph) * 0.35 : 0;
 				var lift = walking ? Math.max(0, Math.cos(ph)) * 0.25 : 0;
 				if (bh === 'groom' && L.pair === 0) { swing = Math.sin(t * 9 + L.side) * 0.5; lift = 0.5; }
 				if (flying) { swing = 0; lift = 0.9; }
 				if (bh === 'snagged') { swing = Math.sin(t * 14 + i) * 0.4; lift = 0.3; }
+				if (riding) { swing = 0; lift = 0.45; }   // gripping the female
 				L.hip.rotation.y = L.baseYaw + swing * L.side;
 				L.hip.rotation.x = -L.side * lift;
 			}
-			// wings: spread and buzz in flight or startle, fold at rest
-			var targetSpread = flying ? 1 : (bh === 'startle' && state.behavior.phase === 'run' ? 0.45 : 0);
-			fly.spread += (targetSpread - fly.spread) * (1 - Math.exp(-dt / 0.08));
-			for (var w = 0; w < fly.wings.length; w++) {
-				var W = fly.wings[w];
+			// wings: spread and buzz in flight or startle, fold at rest; a
+			// singing male holds out the wing nearer the female and vibrates it
+			var targetSpread = flying ? 1 : (bh === 'startle' && rec.behavior.phase === 'run' ? 0.45 : bh === 'accept' ? 0.12 : 0);
+			a.spread += (targetSpread - a.spread) * (1 - Math.exp(-dt / 0.08));
+			var singSide = 0;
+			if (rec.repro.singing && rec.repro.courtTarget) {
+				var tf = WS.findFly(state, rec.repro.courtTarget);
+				if (tf) singSide = WS.bearing(f.heading, tf.fly.x - f.x, tf.fly.z - f.z) > 0 ? -1 : 1;   // model left is -z
+			}
+			a.sing += ((singSide ? 1 : 0) - a.sing) * (1 - Math.exp(-dt / 0.1));
+			for (var w = 0; w < model.wings.length; w++) {
+				var W = model.wings[w];
 				var buzz = flying ? Math.sin(t * 90) * 0.7 : 0;
-				W.pivot.rotation.y = W.side * (0.25 + fly.spread * 1.15);
-				W.pivot.rotation.x = W.side * buzz;
+				var out = W.side === singSide ? a.sing : 0;
+				W.pivot.rotation.y = W.side * (0.25 + a.spread * 1.15 + out * 1.2);
+				W.pivot.rotation.x = W.side * (buzz + out * Math.sin(t * 110) * 0.22);
 			}
 			// proboscis follows feeding output
 			var ext = bh === 'feed' ? 1 : 0;
-			fly.probExt += (ext - fly.probExt) * (1 - Math.exp(-dt / 0.12));
-			fly.prob.scale.setScalar(0.01 + fly.probExt);
+			a.probExt += (ext - a.probExt) * (1 - Math.exp(-dt / 0.12));
+			model.prob.scale.setScalar(0.01 + a.probExt);
+			// abdomen tip bends down to lay
+			a.tilt += ((bh === 'oviposit' ? 0.38 : 0) - a.tilt) * (1 - Math.exp(-dt / 0.2));
+			model.abdomen.rotation.z = a.tilt;
 			// antennae twitch (cosmetic)
-			fly.twitchT -= dt;
-			if (fly.twitchT <= 0) {
-				fly.twitchT = 0.6 + crand() * 1.4;
-				fly.twitchTarget = [(crand() - 0.5) * 0.5, (crand() - 0.5) * 0.5];
+			a.twitchT -= dt;
+			if (a.twitchT <= 0) {
+				a.twitchT = 0.6 + crand() * 1.4;
+				a.twitchTarget = [(crand() - 0.5) * 0.5, (crand() - 0.5) * 0.5];
 			}
-			for (var a = 0; a < 2; a++) {
-				fly.twitch[a] += (fly.twitchTarget[a] - fly.twitch[a]) * (1 - Math.exp(-dt / 0.1));
-				fly.antennae[a].rotation.y = fly.twitch[a];
+			for (var k = 0; k < 2; k++) {
+				a.twitch[k] += (a.twitchTarget[k] - a.twitch[k]) * (1 - Math.exp(-dt / 0.1));
+				model.antennae[k].rotation.y = a.twitch[k];
 			}
 			// body bob and snag struggle
-			fly.body.position.y = walking ? Math.abs(Math.sin(fly.walkPhase)) * 0.012 : 0;
-			fly.body.rotation.z = bh === 'snagged' ? Math.sin(t * 18) * 0.12 : 0;
-			fly.marker.position.set(pose.x, 0, pose.z);
+			model.body.position.y = walking ? Math.abs(Math.sin(a.walkPhase)) * 0.012 : 0;
+			model.body.rotation.z = bh === 'snagged' ? Math.sin(t * 18) * 0.12 : 0;
+			model.marker.position.set(pose.x, 0, pose.z);
 			var s = 1 + Math.min(4, pose.y) * 0.15;
-			fly.blob.scale.set(1.3 * s, 0.8 * s, 1);
-			fly.blob.rotation.z = pose.heading;
-			var zoomFade = clamp(1.6 - camera.zoom / 5, 0.25, 0.9);
-			fly.ring.material.opacity = zoomFade;
-			// the eyes view is inside the head; the findability ring is for the overview
+			model.blob.scale.set(1.3 * s, 0.8 * s, 1);
+			model.blob.rotation.z = pose.heading;
+			model.ring.material.opacity = clamp(1.6 - camera.zoom / 5, 0.25, 0.9);
+		}
+
+		// The focused fly: the eyes view is inside its head; the
+		// findability ring is for the overview.
+		function animateHero(rec, pose, dt, t, state) {
+			animateModel(fly, rec, pose, dt, t, animOf(rec.id), state);
 			fly.root.visible = viewMode !== 'eyes';
 			fly.marker.visible = viewMode !== 'eyes';
 			fly.ring.visible = viewMode === 'garden';
+			fly.root.userData.pick.id = rec.id;
 		}
 
 		/* ---------- X-ray: glass body and the brain inside ---------- */
@@ -1001,19 +1181,23 @@
 			});
 		})();
 
+		// X-ray applies to the focused fly's model (both heroes); the crowd
+		// stays opaque.
 		function applyXray() {
-			for (var i = 0; i < fly.shells.length; i++) {
-				var s = fly.shells[i];
-				s.mesh.material = xray ? s.glass : s.opaque;
-				s.mesh.renderOrder = xray ? 6 : 0;   // glass after the brain it covers
-			}
-			// the lining is a backdrop for the brain; the fallback brain has none
-			for (var j = 0; j < fly.linings.length; j++) fly.linings[j].visible = xray && !!brain;
-			// legs and antennae stay dark but let the brain show through
-			fly.dark.transparent = xray;
-			fly.dark.opacity = xray ? 0.45 : 1;
-			fly.dark.depthWrite = !xray;
-			fly.dark.needsUpdate = true;
+			[heroes.female, heroes.male].forEach(function (h) {
+				for (var i = 0; i < h.shells.length; i++) {
+					var s = h.shells[i];
+					s.mesh.material = xray ? s.glass : s.opaque;
+					s.mesh.renderOrder = xray ? 6 : 0;   // glass after the brain it covers
+				}
+				// the lining is a backdrop for the brain; the fallback brain has none
+				for (var j = 0; j < h.linings.length; j++) h.linings[j].visible = xray && !!brain;
+				// legs and antennae stay dark but let the brain show through
+				h.dark.transparent = xray;
+				h.dark.opacity = xray ? 0.45 : 1;
+				h.dark.depthWrite = !xray;
+				h.dark.needsUpdate = true;
+			});
 			if (brain) brain.points.visible = xray;
 		}
 		applyXray();
@@ -1026,7 +1210,7 @@
 		// data null removes the brain (the fallback brain has no neurons to show).
 		function buildBrain(data) {
 			if (brain) {
-				fly.body.remove(brain.points);
+				if (brain.points.parent) brain.points.parent.remove(brain.points);
 				pip.scene.remove(brain.pipPoints);
 				brain.geo.dispose();
 				brain = null;
@@ -1291,9 +1475,10 @@
 		scene.add(dangerGroup);
 		var dangerMat = track(new THREE.MeshBasicMaterial({ color: 0xff4b3a, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false }));
 		var dangerMeshes = {};
-		function updateDanger(state, info) {
+		function updateDanger(state, info, rec) {
 			var seen = {};
 			var webs = info && info.senses ? info.senses.threat.webs : [];
+			var eye = rec.fly;
 			for (var i = 0; i < webs.length; i++) {
 				var w = webs[i];
 				var web = WS.findById(state.webs, w.id);
@@ -1307,9 +1492,9 @@
 					dangerGroup.add(m);
 				}
 				var f = WS.webFrame(web);
-				var fwd = WS.forward(state.fly.heading);
+				var fwd = WS.forward(eye.heading);
 				var p = m.geometry.attributes.position.array;
-				p[0] = state.fly.x + fwd.x * 0.5; p[1] = state.fly.y + 0.35; p[2] = state.fly.z + fwd.z * 0.5;
+				p[0] = eye.x + fwd.x * 0.5; p[1] = eye.y + 0.35; p[2] = eye.z + fwd.z * 0.5;
 				p[3] = f.cx + f.ux * web.radius; p[4] = f.cy; p[5] = f.cz + f.uz * web.radius;
 				p[6] = f.cx - f.ux * web.radius; p[7] = f.cy; p[8] = f.cz - f.uz * web.radius;
 				m.geometry.attributes.position.needsUpdate = true;
@@ -1332,11 +1517,11 @@
 		trailLine.frustumCulled = false;
 		scene.add(trailLine);
 		var trail = [];
-		function updateTrail(state) {
-			var f = state.fly;
+		function updateTrail(rec) {
+			var f = rec.fly;
 			var last = trail[trail.length - 1];
 			if (!last || Math.hypot(last.x - f.x, last.z - f.z) > 0.25 || Math.abs(last.y - f.y) > 0.25) {
-				trail.push({ x: f.x, y: f.y + 0.06, z: f.z, b: state.behavior.current });
+				trail.push({ x: f.x, y: f.y + 0.06, z: f.z, b: rec.behavior.current });
 				if (trail.length > TRAIL) trail.shift();
 			}
 			for (var i = 0; i < trail.length; i++) {
@@ -1376,13 +1561,18 @@
 		function updateSelection(state) {
 			if (!selection) { selRing.visible = false; return; }
 			var obj = selection.type === 'fruit' ? WS.findById(state.fruits, selection.id) :
-				selection.type === 'web' ? WS.findById(state.webs, selection.id) : null;
+				selection.type === 'web' ? WS.findById(state.webs, selection.id) :
+				selection.type === 'brood' ? WS.findById(state.brood, selection.id) : null;
 			if (!obj) { selRing.visible = false; return; }
 			selRing.visible = true;
 			if (selection.type === 'fruit') {
 				selRing.position.set(obj.x, obj.stage === 'attached' ? obj.y : 0.06, obj.z);
 				selRing.rotation.set(-Math.PI / 2, 0, 0);
 				selRing.scale.setScalar(obj.radius * 1.5);
+			} else if (selection.type === 'brood') {
+				selRing.position.set(obj.x, 0.06, obj.z);
+				selRing.rotation.set(-Math.PI / 2, 0, 0);
+				selRing.scale.setScalar(obj.stage === 'egg' ? 0.5 : 0.9);
 			} else {
 				var f = WS.webFrame(obj);
 				selRing.position.set(f.cx, f.cy, f.cz);
@@ -1434,7 +1624,7 @@
 			renderer.setClearColor(new THREE.Color(0.08 + 0.1 * dayness, 0.08 + 0.1 * dayness, 0.1 + 0.06 * dayness));
 			skyMat.uniforms.uZenith.value.setRGB(0.04 + 0.4 * dayness, 0.05 + 0.56 * dayness, 0.09 + 0.71 * dayness);
 			skyMat.uniforms.uHorizon.value.setRGB(0.1 + 0.69 * dayness, 0.11 + 0.72 * dayness, 0.13 + 0.68 * dayness);
-			for (var k in fly.glass) fly.glass[k].uniforms.uLight.value = dayness;
+			[heroes.female, heroes.male].forEach(function (h) { for (var k in h.glass) h.glass[k].uniforms.uLight.value = dayness; });
 			applyFog();
 		}
 
@@ -1457,20 +1647,36 @@
 		var suspended = false;
 		var api = { kind: 'webgl' };
 
+		// info: {focusId, poseOf(rec), senses, motor, fire} for the focused fly
+		// (default: the first adult); pose is the focused fly's interpolated pose.
+		var lastFocus = null, lastSimTime = -1;
 		api.sync = function (state, pose, info) {
 			var now = performance.now() / 1000;
 			var dt = lastT === null ? 0.016 : Math.min(0.1, now - lastT);
 			lastT = now;
+			var rec = (info && info.focusId && WS.findFly(state, info.focusId)) || state.flies[0];
+			if (state.time < lastSimTime - 1e-6) anims = {};   // a new run or a replay
+			lastSimTime = state.time;
+			if (rec.id !== lastFocus) {
+				// a new focus: the trail and the close cameras start afresh
+				trail = [];
+				close.heading = null;
+				eyes.heading = null;
+				lastFocus = rec.id;
+			}
 			syncFruit(state);
 			syncWebs(state, now);
-			animateFly(state, pose, dt, now);
-			brainWorld.set(BRAIN_CENTER[0], BRAIN_CENTER[1], BRAIN_CENTER[2]).applyAxisAngle(yAxis, pose.heading).add(fly.root.position);
+			setHero(rec.sex);
+			animateHero(rec, pose, dt, now, state);
+			syncCrowd(state, info, rec.id, dt, now);
+			syncBrood(state, now);
+			brainWorld.set(BRAIN_CENTER[0], BRAIN_CENTER[1], BRAIN_CENTER[2]).multiplyScalar(fly.root.scale.x).applyAxisAngle(yAxis, pose.heading).add(fly.root.position);
 			updateBrain(state, info);
-			if (overlays.trail) updateTrail(state);
+			if (overlays.trail) updateTrail(rec);
 			trailLine.visible = overlays.trail;
 			// in the eyes view the wedge would start at the camera
 			dangerGroup.visible = overlays.danger && viewMode !== 'eyes';
-			if (dangerGroup.visible) updateDanger(state, info);
+			if (dangerGroup.visible) updateDanger(state, info, rec);
 			neural.visible = overlays.neural;
 			if (overlays.neural) updateNeural(pose, info);
 			scentMesh.visible = overlays.scent;
@@ -1531,8 +1737,12 @@
 
 		api.pick = function (clientX, clientY) {
 			setNdc(clientX, clientY);
-			// in the eyes view the (hidden) fly surrounds the camera
+			// in the eyes view the (hidden) focused fly surrounds the camera
 			var targets = viewMode === 'eyes' ? [] : [fly.root];
+			['female', 'male'].forEach(function (s) {
+				crowd[s].groups.forEach(function (g) { if (g.inst.visible && !g.marker) targets.push(g.inst); });
+			});
+			if (broodInst.visible) targets.push(broodInst);
 			for (var id in fruitMeshes) targets.push(fruitMeshes[id]);
 			for (var wid in webObjs) targets.push(webObjs[wid].disk);
 			var hits = raycaster.intersectObjects(targets, true);
@@ -1541,7 +1751,8 @@
 				while (o && !o.userData.pick) o = o.parent;
 				if (o) {
 					var g = api.screenToGround(clientX, clientY);
-					return { type: o.userData.pick.type, id: o.userData.pick.id, x: g ? g.x : hits[i].point.x, z: g ? g.z : hits[i].point.z };
+					var pid = o.userData.ids ? o.userData.ids[hits[i].instanceId] : o.userData.pick.id;
+					return { type: o.userData.pick.type, id: pid, x: g ? g.x : hits[i].point.x, z: g ? g.z : hits[i].point.z };
 				}
 			}
 			var gp = api.screenToGround(clientX, clientY);

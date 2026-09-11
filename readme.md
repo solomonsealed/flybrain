@@ -1,8 +1,10 @@
 # FlyBrain
 
-Interactive browser simulation of the *Drosophila melanogaster* (fruit fly) brain in a small 3D garden. 139,255 neurons and 2.7M connections from the [FlyWire FAFB v783](https://codex.flywire.ai) connectome run as a leaky integrate-and-fire network in a Web Worker, stepped in lockstep with the fly's body.
+Interactive browser simulation of the *Drosophila melanogaster* (fruit fly) brain in a small 3D garden. 139,255 neurons and 2.7M connections from the [FlyWire FAFB v783](https://codex.flywire.ai) connectome run as a leaky integrate-and-fire network in a Web Worker, stepped in lockstep with the flies' bodies: a female and a male, each with its own copy of the connectome, and up to 48 flies as they breed.
 
 A walled orchard, rendered with Three.js, has fruit trees that drop ripe fruit and spiderwebs strung across tempting routes. The fly receives only what it could sense locally: odor at two antennae, taste on contact, a visual cue from webs it can see, touch, wind and light. Those signals stimulate identified neuron populations. Activity read out from the connectome drives a documented motor adapter that moves the fly. Watch a hungry fly follow the smell of fermenting apples, get startled by a web beside them, retreat, and come back.
+
+The male courts the female; if she accepts, they mate and she lays one egg on fermenting fruit, which hatches, pupates beside the fruit and emerges as a new adult. Courtship and egg-laying are modeled programs: FlyWire's brain is female, both sexes run it, and it has no male courtship circuit.
 
 What is connectome-derived and what is modeled is labeled everywhere: in the brain-mode badge, in the live trace, and in [docs/world-model.md](docs/world-model.md).
 
@@ -10,10 +12,10 @@ What is connectome-derived and what is modeled is labeled everywhere: in the bra
 
 Serve the folder over HTTP (for example `python3 -m http.server`) and open `index.html`, or visit the hosted version. The connectome loads, the brain settles, and the fly starts in the sunny clearing.
 
-- **Observe** -- click a fruit, web or the fly to see ripeness, remaining food, how visible a web is, or what the fly senses.
+- **Observe** -- click a fruit, web, fly, egg, larva or pupa to see ripeness, remaining food, how visible a web is, what a fly senses, or when the young will develop. Clicking a fly also focuses it (so does **N**): the views, the X-ray brain and the meters follow the focused fly.
 - **Fruit** -- click the ground to drop ripe fruit. Only eating reduces hunger.
 - **Web** -- hang a web facing the fly, or click one to take it down.
-- **Touch / Air** -- touch the fly, or drag to blow a gust.
+- **Touch / Air** -- touch a fly, or drag to blow a gust.
 - **Light / Temp** -- dim the garden, or warm and cool it.
 - **Follow / Pause / Reset** -- follow camera; pause world and brain together; new run.
 - **Inspect** -- live traces of senses, neural readouts and motor output; an event timeline; repeatable experiments (scenario, seed, steering mode, neural silencing, replay, log export).
@@ -22,7 +24,7 @@ Serve the folder over HTTP (for example `python3 -m http.server`) and open `inde
 
 In the garden view, drag to pan, scroll to zoom, right-drag to orbit. **F** follows the fly, **C** toggles the close-up, **E** the fly's eyes, **X** the X-ray, and **R** (or **Esc**) returns to the garden. The bottom panel shows all 139K neurons firing (WebGL). **Brain 3D** shows the same recorded activity on a 3D brain.
 
-URL options: `?seed=3&scenario=webPatch&mode=connectome`, `?renderer=2d`, `?brain=legacy`.
+URL options: `?seed=3&scenario=webPatch&mode=connectome`, `?flies=48` (start with N flies, at most 48), `?renderer=2d`, `?brain=legacy`.
 
 ## Documentation
 

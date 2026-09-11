@@ -65,7 +65,7 @@ function test_world_named_areas_not_used_by_fly_modules() {
 	// the viewer-facing area labels.
 	if (typeof require === 'undefined' && typeof WorldTestHarness === 'undefined') return;
 	var fs = WorldTestHarness.fs, path = WorldTestHarness.path, root = WorldTestHarness.ROOT;
-	['js/world-physics.js', 'js/world-senses.js', 'js/world-brain-adapter.js', 'js/fly-logic.js', 'js/world-sim.js'].forEach(function (f) {
+	['js/world-physics.js', 'js/world-senses.js', 'js/world-brain-adapter.js', 'js/fly-logic.js', 'js/world-sim.js', 'js/world-life.js'].forEach(function (f) {
 		var src = fs.readFileSync(path.join(root, f), 'utf8');
 		assertTrue(src.indexOf('.areas') === -1, f + ' does not read named areas');
 		assertTrue(!/initialFruit|cfg\.webs\b/.test(src), f + ' does not read authored fruit/web layout');
@@ -382,6 +382,223 @@ function test_encoder_grades_and_silences_inputs() {
 	assertTrue(count(hungry, 0, 200) > count(sated, 0, 200), 'hunger raises olfactory gain');
 }
 
+// ------------------------------------------------------------
+// Several flies, courtship and the life cycle (no connectome)
+// ------------------------------------------------------------
+
+// A pair on open ground: female at (60, 45) facing east, male 3 BL behind her.
+function pairState(extra) {
+	var o = { fruit: false, webs: false, founders: [
+		{ sex: 'female', x: 60, z: 45, heading: 0 },
+		{ sex: 'male', x: 57, z: 45, heading: 0 }] };
+	for (var k in extra || {}) o[k] = extra[k];
+	return WT.state(1, o);
+}
+
+function lifeSteps(st, seconds) {
+	var cfg = WT.cfg(), dt = cfg.clock.bodyDt, n = Math.round(seconds / dt);
+	for (var i = 0; i < n; i++) {
+		WorldLife.step(st, cfg, dt);
+		st.time = Math.round((st.time + dt) * 1e9) / 1e9;
+	}
+}
+
+function test_world_founders_single_by_default_pair_or_many_by_option() {
+	var cfg = WT.cfg();
+	var one = WT.state(1);
+	assertEqual(one.flies.length, 1, 'a state without founders options holds one fly (the documented experiments)');
+	assertEqual(one.flies[0].sex, 'female', 'the single fly is female (FlyWire\'s brain is female)');
+	assertTrue(one.fly === one.flies[0].fly && one.drives === one.flies[0].drives, 'state.fly and state.drives are the first fly\'s');
+	var pair = WorldState.create(cfg, 1, cfg.scenarios.free.stateOptions);
+	assertEqual(pair.flies.map(function (r) { return r.sex; }).join(','), 'female,male', 'the default garden starts with a female and a male');
+	var many = WorldState.create(cfg, 1, { founders: 60 });
+	assertEqual(many.flies.length, cfg.population.max, 'founders are capped at the population maximum');
+	assertEqual(many.flies.filter(function (r) { return r.sex === 'male'; }).length, cfg.population.max / 2, 'alternating sexes');
+	many.flies.forEach(function (r) {
+		assertTrue(WorldState.insideEnclosure(cfg, r.fly.x, r.fly.z, 1) && WorldState.groundPointFree(cfg, r.fly.x, r.fly.z, 0.5), 'founder placed on free ground');
+	});
+	assertEqual(WorldState.serialize(WorldState.create(cfg, 1, {})), WorldState.serialize(one), 'founder scatter never touches the garden\'s random sequence');
+}
+
+function test_world_serialization_stores_each_fly_once_and_refocuses() {
+	var st = pairState();
+	var json = WorldState.serialize(st);
+	var raw = JSON.parse(json);
+	assertTrue(!('fly' in raw) && !('drives' in raw) && raw.flies.length === 2, 'per-fly aliases are not serialized');
+	var back = WorldState.deserialize(json);
+	assertEqual(WorldState.serialize(back), json, 'round trip');
+	assertTrue(back.fly === back.flies[0].fly && back.current === back.flies[0], 'deserialize focuses the first adult');
+	WorldState.focus(st, st.flies[1]);
+	var c = WorldState.clone(st);
+	assertEqual(c.current.id, st.flies[1].id, 'clone keeps the focused fly');
+	// a state saved before the garden held several flies
+	var old = JSON.parse(WorldState.serialize(WT.state(2)));
+	var f = old.flies[0];
+	delete old.flies; delete old.brood; delete old.nextFlyId;
+	old.fly = f.fly; old.drives = f.drives; old.behavior = f.behavior; old.pending = f.pending; old.intake = f.intake;
+	delete old.drives.egg;
+	var up = WorldState.deserialize(old);
+	assertEqual(up.flies.length, 1, 'old single-fly state upgrades to one adult');
+	assertTrue(up.fly === up.flies[0].fly && up.drives.egg === 0 && up.brood.length === 0, 'upgraded fields in place');
+}
+
+function test_world_focus_runs_single_fly_modules_on_each_fly() {
+	var cfg = WT.cfg(), st = pairState();
+	var seen = [];
+	WorldState.focus(st, st.flies[0]);
+	WorldState.eachFly(st, function (rec) { seen.push(rec.id + ':' + (st.fly === rec.fly && st.pending === rec.pending && st.repro === rec.repro)); });
+	assertEqual(seen.join(','), 'fly-1:true,fly-2:true', 'each adult in turn, with every alias pointed at it');
+	assertEqual(st.current.id, 'fly-1', 'focus restored');
+	WorldState.applyCommand(st, cfg, { type: 'touch', params: { fly: 'fly-2', side: 'left' } });
+	assertEqual(st.flies[1].pending.touchL, 1, 'touch reaches the named fly');
+	assertEqual(st.flies[0].pending.touchL, 0, 'and no other');
+	assertTrue(!WorldState.applyCommand(st, cfg, { type: 'touch', params: { fly: 'nope' } }).ok, 'unknown fly rejected');
+	assertTrue(!WorldState.applyCommand(st, cfg, { type: 'placeWeb', params: { x: 56, z: 47 } }).ok, 'no web within 5 BL of any fly');
+}
+
+function test_physics_flies_do_not_pass_through_each_other() {
+	var cfg = WT.cfg();
+	var st = WT.state(1, { fruit: false, webs: false, founders: [
+		{ sex: 'female', x: 55, z: 45, heading: 0 }, { sex: 'male', x: 65, z: 45, heading: Math.PI }] });
+	var minD = Infinity;
+	for (var i = 0; i < 240; i++) {
+		WorldState.eachFly(st, function () { WorldPhysics.step(st, cfg, { speed: 4, yawRate: 0 }, cfg.clock.bodyDt); });
+		minD = Math.min(minD, Math.hypot(st.flies[0].fly.x - st.flies[1].fly.x, st.flies[0].fly.z - st.flies[1].fly.z));
+	}
+	assertTrue(minD >= 2 * cfg.fly.collisionRadius - 0.02, 'bodies stay apart (closest ' + minD.toFixed(3) + ' BL)');
+	// a copulating pair is not solid to itself
+	st.flies[0].repro.partner = 'fly-2';
+	WorldState.focus(st, st.flies[0]);
+	var obstacles = WorldPhysics._circleObstacles(st, cfg, 0);
+	assertTrue(!obstacles.some(function (o) { return o.kind === 'fly'; }), 'the partner is not an obstacle');
+}
+
+function test_senses_male_sees_females_and_females_hear_song() {
+	var cfg = WT.cfg(), st = pairState();
+	var F = st.flies[0], M = st.flies[1];
+	WorldState.focus(st, M);
+	var s = WorldSenses.sample(st, cfg);
+	assertEqual(s.social.females.length, 1, 'the male sees the female ahead of him');
+	var seen = s.social.females[0];
+	assertTrue(seen.mature && !seen.mated && Math.abs(seen.bearing) < 0.2, 'mature, unmated, straight ahead');
+	M.fly.heading = Math.PI;
+	assertEqual(WorldSenses.sample(st, cfg).social.females.length, 0, 'not when she is in his rear blind sector');
+	M.fly.heading = 0;
+	F.repro.matings = 1; F.repro.receptiveFrom = st.time + 50;
+	assertTrue(WorldSenses.sample(st, cfg).social.females[0].mated, 'a recently mated female reads as mated (cVA)');
+	WorldState.focus(st, F);
+	M.fly.x = 58.5;   // singing distance: he sings close behind her
+	assertEqual(WorldSenses.sample(st, cfg).social.song, 0, 'a silent male is not heard');
+	M.repro.singing = true;
+	var h = WorldSenses.sample(st, cfg).social;
+	assertTrue(h.song > 0 && h.suitor === M.id, 'she hears his song from behind her');
+	assertEqual(h.females.length, 0, 'females do not look for mates');
+	M.fly.x = 50;
+	assertEqual(WorldSenses.sample(st, cfg).social.song, 0, 'song fades beyond songRange');
+}
+
+function test_policy_courtship_needs_an_unmated_female_and_a_calm_brain() {
+	var cfg = WT.cfg(), st = pairState();
+	var F = st.flies[0], M = st.flies[1];
+	st.time = 5;
+	var senses = function (social) { var s = WT.senses(); s.social = social; return s; };
+	var female = { id: F.id, mature: true, mated: false, busy: false, accepting: false, distance: 3, bearing: 0.1 };
+	WorldState.focus(st, M);
+	M.behavior.current = 'walk'; M.behavior.enterTime = 0;
+	FlyPolicy.decide(st, cfg, WT.neutralMotor({ walkDrive: 0.5 }), senses({ females: [female], song: 0, suitor: null, target: null }));
+	assertEqual(M.behavior.current, 'court', 'a male who sees an unmated female courts her');
+	assertEqual(M.repro.courtTarget, F.id, 'and remembers whom');
+	M.behavior.current = 'walk'; M.behavior.cooldowns = {};
+	FlyPolicy.decide(st, cfg, WT.neutralMotor({ walkDrive: 0.5 }), senses({ females: [{ id: F.id, mature: true, mated: true, busy: false, distance: 3, bearing: 0 }], song: 0, suitor: null, target: null }));
+	assertEqual(M.behavior.current, 'walk', 'not a recently mated one');
+	WorldState.focus(st, F);
+	F.behavior.current = 'walk'; F.behavior.enterTime = 0;
+	FlyPolicy.decide(st, cfg, WT.neutralMotor({ walkDrive: 0.5, escape: 0.3 }), senses({ females: [], song: 0.6, suitor: M.id, target: null }));
+	assertEqual(F.behavior.current, 'walk', 'a female with defensive output does not accept');
+	FlyPolicy.decide(st, cfg, WT.neutralMotor({ walkDrive: 0.5 }), senses({ females: [], song: 0.6, suitor: M.id, target: null }));
+	assertEqual(F.behavior.current, 'accept', 'a calm, receptive female who hears song stands for him');
+}
+
+function test_life_one_mating_gives_exactly_one_egg_laid_on_fermenting_fruit() {
+	var cfg = WT.cfg(), st = pairState();
+	var F = st.flies[0], M = st.flies[1];
+	assertEqual(cfg.reproduction.offspringPerMating, 1, 'one offspring per mating');
+	// courtship at mounting range
+	M.fly.x = F.fly.x - 1.0;
+	WorldState.focus(st, M); FlyPolicy.enter(st, cfg, 'court', 'test'); M.repro.courtTarget = F.id;
+	WorldState.focus(st, F); FlyPolicy.enter(st, cfg, 'accept', 'test');
+	lifeSteps(st, 0.05);
+	assertTrue(F.behavior.current === 'copulate' && M.behavior.current === 'copulate', 'an accepting female within reach is mounted');
+	assertTrue(st.events.some(function (e) { return e.type === 'mating'; }), 'mating event');
+	lifeSteps(st, cfg.reproduction.copulationDuration + 0.2);
+	assertEqual(F.repro.eggs, 1, 'one egg from one mating');
+	assertTrue(F.behavior.current === 'idle' && M.behavior.current === 'idle' && !F.repro.partner && !M.repro.partner, 'the pair separates');
+	assertTrue(Math.hypot(M.fly.x - F.fly.x, M.fly.z - F.fly.z) >= 2 * cfg.fly.collisionRadius && M.fly.y === 0, 'he dismounts clear of her');
+	assertTrue(!WorldLife.isReceptive(st, cfg, F) && WorldLife.recentlyMated(st, F), 'she is not receptive after mating');
+	// she lays on fermenting fruit under her head
+	var r = WorldState.applyCommand(st, cfg, { type: 'placeFruit', params: { x: F.fly.x + 1.2, z: F.fly.z } });
+	var fruit = WorldState.findById(st.fruits, r.id);
+	fruit.stage = 'fermenting';
+	WorldState.focus(st, F); FlyPolicy.enter(st, cfg, 'oviposit', 'test');
+	lifeSteps(st, cfg.reproduction.ovipositDuration + 0.1);
+	assertEqual(st.brood.length, 1, 'one egg laid');
+	var egg = st.brood[0];
+	assertTrue(egg.stage === 'egg' && egg.fruitId === fruit.id && egg.parents[0] === F.id && egg.parents[1] === M.id, 'on that fruit, with both parents');
+	assertEqual(F.repro.eggs, 0, 'she has no more eggs');
+	WorldState.focus(st, F); FlyPolicy.enter(st, cfg, 'oviposit', 'test');
+	lifeSteps(st, cfg.reproduction.ovipositDuration + 0.1);
+	assertEqual(st.brood.length, 1, 'no second egg from the same mating');
+}
+
+function test_life_brood_develops_and_emerges_as_an_adult() {
+	var cfg = WT.cfg(), lc = cfg.lifecycle, st = pairState();
+	st.brood.push({ id: 'fly-3', sex: 'male', stage: 'egg', stageTime: 0, laid: 0, x: 70, z: 50, dirX: 1, dirZ: 0, heading: 0, fruitId: null, parents: ['fly-1', 'fly-2'], adult: null });
+	st.nextFlyId = 4;
+	lifeSteps(st, lc.eggDuration + 0.1);
+	assertEqual(st.brood[0].stage, 'larva', 'the egg hatches');
+	lifeSteps(st, lc.larvaDuration);
+	var pupa = st.brood[0];
+	assertTrue(pupa.stage === 'pupa' && pupa.adult && pupa.adult.id === 'fly-3', 'the larva pupates, and its adult is prepared');
+	assertTrue(Math.abs(pupa.x - (70 + lc.pupaWander)) < 1e-9, 'beside where it fed');
+	assertEqual(WorldLife.settlingPupae(st, cfg).length, 0, 'its brain does not settle yet');
+	lifeSteps(st, lc.pupaDuration - cfg.brain.settleSteps * cfg.clock.neuralDt + 0.1);
+	assertEqual(WorldLife.settlingPupae(st, cfg).length, 1, 'its brain settles in the last part of the pupal stage');
+	lifeSteps(st, cfg.brain.settleSteps * cfg.clock.neuralDt);
+	assertEqual(st.brood.length, 0, 'the pupa is gone');
+	var adult = WorldState.findFly(st, 'fly-3');
+	assertTrue(adult && adult.sex === 'male' && adult.born !== null && adult.parents[0] === 'fly-1', 'a new male emerged');
+	assertTrue(!WorldLife.isMature(st, cfg, adult), 'not yet mature');
+	lifeSteps(st, lc.maturation.male + 0.1);
+	assertTrue(WorldLife.isMature(st, cfg, adult), 'mature after maturation');
+	assertTrue(st.events.some(function (e) { return e.type === 'eclosed' && e.data.fly === 'fly-3'; }), 'eclosion event');
+}
+
+function test_life_population_never_exceeds_the_cap() {
+	var cfg = WT.cfg(), max = cfg.population.max;
+	var st = WT.state(1, { fruit: false, webs: false, founders: max - 1 });
+	var r = WorldState.applyCommand(st, cfg, { type: 'placeFruit', params: { x: 60, z: 45 } });
+	WorldState.findById(st.fruits, r.id).stage = 'fermenting';
+	function gravidOnFruit(rec) {
+		rec.repro.eggs = 1; rec.repro.matings = 1; rec.repro.sire = 'fly-2';
+		rec.fly.x = 60 + 0.8 + cfg.fly.headOffset; rec.fly.z = 45; rec.fly.heading = Math.PI;
+		WorldState.focus(st, rec); FlyPolicy.enter(st, cfg, 'oviposit', 'test');
+	}
+	var females = st.flies.filter(function (f) { return f.sex === 'female'; });
+	gravidOnFruit(females[0]);
+	lifeSteps(st, cfg.reproduction.ovipositDuration + 0.1);
+	assertEqual(WorldLife.population(st), max, 'the last free place is taken by an egg');
+	gravidOnFruit(females[1]);
+	lifeSteps(st, cfg.reproduction.ovipositDuration + 0.1);
+	assertEqual(WorldLife.population(st), max, 'a full garden takes no more eggs');
+	assertTrue(females[1].repro.eggs === 1 && females[1].repro.layBlocked, 'she holds her egg');
+	var s = WT.senses();
+	s.taste = { sugar: 0.9, bitter: 0, fruitId: r.id, fermentingId: r.id };
+	WorldState.focus(st, females[1]);
+	females[1].behavior.cooldowns = {};
+	FlyPolicy.decide(st, cfg, WT.neutralMotor(), s);
+	assertTrue(females[1].behavior.current !== 'oviposit', 'and does not try to lay while the garden is full');
+}
+
 // Neuron positions asset (display-only): format, validation, orientation.
 function positionsBuffer(n, min, max, qs, magic) {
 	var buf = new ArrayBuffer(36 + n * 6), dv = new DataView(buf);
@@ -676,5 +893,94 @@ var test_integration_neuron_positions_match_the_connectome_and_anatomy = functio
 	assertTrue(groups.MB_KC.length > 0 && groups.GNG_DESC.length > 0, 'reference groups populated');
 	assertTrue(mean(groups.MB_KC)[1] > mean(groups.GNG_DESC)[1], 'mushroom bodies are dorsal to the gnathal ganglia');
 	assertTrue(mean(groups.OLF_ORN_FOOD)[0] > mean(groups.MB_KC)[0], 'antennal lobes are anterior to the Kenyon cells');
+};
+
+// One worker holds a brain per fly over one connectome: a brain stepped
+// alongside another, in batches, follows exactly the course it takes alone.
+var test_worker_brains_are_independent_and_batches_match_single_steps = function () {
+	var b = WorldIntegration.backend(), p = b.popsInfo.pops;
+	var base = WorldIntegration.baseline(b);
+	var stimA = function () { return WorldIntegration.stim(base.concat([[p.ORN_FOOD_L, 0.2]])); };
+	var stimB = function () { return WorldIntegration.stim(base.concat([[p.VPN_LOOM_PROXY_R, 0.25]])); };
+	function solo(stimFn) {
+		b.reset();
+		var out = [];
+		for (var k = 0; k < 20; k++) b.step({ brain: 0, stepId: k, stimulus: stimFn() }, function (r) { out.push(r.firedNeurons); });
+		return out.join(',');
+	}
+	var a = solo(stimA), c = solo(stimB);
+	b.reset();
+	var ab = [], cb = [];
+	for (var k = 0; k < 20; k++) {
+		b.stepAll([{ brain: 0, stepId: k, stimulus: stimA() }, { brain: 1, stepId: k, stimulus: stimB() }], function (rs) {
+			ab.push(rs[0].firedNeurons); cb.push(rs[1].firedNeurons);
+			assertTrue(rs[0].brain === 0 && rs[1].brain === 1, 'results in request order');
+		});
+	}
+	assertEqual(ab.join(','), a, 'brain 0 in a batch matches brain 0 alone');
+	assertEqual(cb.join(','), c, 'brain 1 in a batch matches the same stimulus alone');
+	b.resetBrain(1);
+	var again = [];
+	for (k = 0; k < 20; k++) b.step({ brain: 1, stepId: k, stimulus: stimB() }, function (r) { again.push(r.firedNeurons); });
+	assertEqual(again.join(','), c, 'resetBrain returns one brain to rest');
+	b.reset();
+};
+
+var test_integration_pair_garden_replays_exactly = function () {
+	var sc = FlyWorldSim.scenarioOptions(WorldConfig, 'free');
+	var sim = WorldIntegration.sim({ seed: 1, stateOptions: sc.stateOptions });
+	assertEqual(sim.state.flies.length, 2, 'the default garden has two flies');
+	sim.runSeconds(4);
+	sim.command({ type: 'touch', params: { fly: 'fly-2', location: 'thorax' }, source: 'user' });
+	sim.runSeconds(6);
+	var log = sim.exportLog();
+	var rep = FlyWorldSim.replay(log, sim.backend, { config: WorldConfig });
+	rep.runSeconds(10);
+	assertEqual(rep.fingerprint(), log.finalFingerprint, 'a two-fly run (two brains, courtship) replays exactly');
+};
+
+// The default garden, seed 1: the male courts the female, they mate, and
+// she lays a single egg on fermenting fruit.
+var test_integration_pair_courts_mates_and_lays_one_egg = function () {
+	var sc = FlyWorldSim.scenarioOptions(WorldConfig, 'free');
+	var sim = WorldIntegration.sim({ seed: 1, stateOptions: sc.stateOptions });
+	var ev = [];
+	sim.onEvents(function (es) { es.forEach(function (e) { if (/^(mating|mated|egg-laid)$/.test(e.type)) ev.push(e); }); });
+	sim.runSeconds(60);
+	var mated = ev.filter(function (e) { return e.type === 'mated'; }), laid = ev.filter(function (e) { return e.type === 'egg-laid'; });
+	assertTrue(mated.length >= 1, 'they mated (' + mated.length + ')');
+	assertEqual(laid.length, mated.length, 'one egg per mating');
+	assertEqual(sim.state.brood.length, 1, 'the egg (or larva) is in the garden');
+	var e = sim.state.brood[0], f = WorldState.findById(sim.state.fruits, e.fruitId);
+	assertTrue(e.parents[0] === 'fly-1' && e.parents[1] === 'fly-2', 'daughter or son of the pair');
+	assertTrue(laid[0].data.fermenting && (!f || f.species), 'laid on fermenting fruit');
+	var court = sim.agent('fly-2').trace.some(function (r) { return r.behavior === 'court'; });
+	assertTrue(court || ev[0].t < 15, 'the male courted');
+};
+
+// A new adult's brain settles during the end of the pupal stage, so it
+// emerges with settled readouts and joins the batch.
+var test_integration_newborn_brain_settles_in_the_pupa = function () {
+	var cfg = WorldConfig;
+	var sim = WorldIntegration.sim({ seed: 4, stateOptions: { fruit: false, webs: false, founders: 'pair' } });
+	var st = sim.state, lc = cfg.lifecycle;
+	var adult = WorldState.newFly(st, cfg, { id: 'fly-3', sex: 'female', x: 40, z: 40, heading: 1, parents: ['fly-1', 'fly-2'] });
+	st.nextFlyId = 4;
+	st.brood.push({ id: 'fly-3', sex: 'female', stage: 'pupa', stageTime: st.time - (lc.pupaDuration - 18), laid: st.time - 80,
+		x: 40, z: 40, dirX: 1, dirZ: 0, heading: 1, fruitId: null, parents: ['fly-1', 'fly-2'], adult: adult });
+	sim.runSeconds(3);
+	assertTrue(!sim.agent('fly-3'), 'no brain before the settling window');
+	sim.runSeconds(2);
+	var ag = sim.agent('fly-3');
+	assertTrue(ag && ag.brain === 2 && ag.lastResult, 'the pupa\'s brain is stepping (slot ' + (ag && ag.brain) + ')');
+	sim.runSeconds(14);
+	var rec = WorldState.findFly(st, 'fly-3');
+	assertTrue(rec && rec.born !== null, 'she emerged');
+	var names = sim.backend.readoutNames, floorSet = names.some(function (n) { return ag.readout.floor[n] > 0; });
+	assertTrue(floorSet, 'with settled readout baselines');
+	var x0 = rec.fly.x, z0 = rec.fly.z;
+	sim.runSeconds(6);
+	assertTrue(st.flies.length === 3 && sim.agent('fly-3').lastResult.stepId > 0, 'and runs in the garden with her own brain');
+	assertTrue(isFinite(rec.fly.x + rec.fly.z) && (Math.hypot(rec.fly.x - x0, rec.fly.z - z0) > 0 || rec.behavior.current !== 'idle'), 'she behaves');
 };
 }

@@ -1,6 +1,6 @@
 # The FlyBrain garden: world model, brain interface and limitations
 
-The garden is a small walled orchard rendered with Three.js. Fruit trees drop ripe fruit, two spiderwebs hang across tempting routes, and one fly explores, feeds, startles, retreats and rests. The garden only supplies local sensory samples. Neural activity in the FlyWire connectome, read out through a documented motor adapter, produces the response.
+The garden is a small walled orchard rendered with Three.js. Fruit trees drop ripe fruit, two spiderwebs hang across tempting routes, and a female and a male fly explore, feed, startle, retreat, rest, court and breed. The garden only supplies local sensory samples. Each fly runs its own copy of the FlyWire connectome, and neural activity, read out through a documented motor adapter, produces its response. Courtship, mating and egg-laying are modeled programs on top of that (see [Several flies](#several-flies-courtship-and-the-life-cycle)): FlyWire's brain is female, and both sexes run it.
 
 This document says what is simulated, what is connectome-derived, what is modeled, and what is not established. Measured numbers live in [connectome-baseline.md](connectome-baseline.md) (pathway evidence and calibration) and [world-experiments.md](world-experiments.md) (behavioral experiments across seeds).
 
@@ -10,10 +10,11 @@ Serve the repository over HTTP (the connectome is loaded with XHR and a Web Work
 
 | Control | Effect |
 |---|---|
-| Observe | Click a fruit, web or the fly to inspect ripeness, remaining food, web visibility, or what the fly senses |
+| Observe | Click a fruit, web, fly, egg, larva or pupa to inspect it. Clicking a fly also focuses it: the views, X-ray brain, meters and trace follow the focused fly |
+| N / Shift-N | Focus the next / previous fly |
 | Fruit | Click the ground to drop a ripe fruit |
-| Web | Click the ground to hang a web facing the fly; click a web to take it down |
-| Touch, Air | Touch the fly (head, thorax, abdomen, leg); drag to blow a two-second gust |
+| Web | Click the ground to hang a web facing the nearest fly; click a web to take it down |
+| Touch, Air | Touch the fly you click (head, thorax, abdomen, leg); drag to blow a two-second gust |
 | Light, Temp | Bright / dim / dark; neutral / warm / cool |
 | Follow, Pause, Reset | Follow camera; pause world and brain together; new run from the seed |
 | Inspect | Live trace, event timeline, experiments (scenario, seed, steering mode, speed, silencing, replay, log export) |
@@ -21,26 +22,27 @@ Serve the repository over HTTP (the connectome is loaded with XHR and a Web Work
 | Camera | Drag to pan, wheel or pinch to zoom, right-drag or two-finger twist to orbit, F follow, R reset, arrow keys pan when the garden has focus |
 | Views | Garden (overview), Close-up (C: drag orbits the fly, wheel or pinch zooms to its brain), Fly's eyes (E: first person; drag looks around, wheel or pinch sets the field of view). Esc or R returns to the garden |
 
-URL options make runs shareable and reproducible: `?seed=3&scenario=webPatch&mode=connectome`. `?renderer=2d` forces the Canvas 2D renderer and `?brain=legacy` forces the fallback brain.
+URL options make runs shareable and reproducible: `?seed=3&scenario=webPatch&mode=connectome`. `?flies=N` starts with N founders (alternating female and male, scattered around the clearing, at most 48). `?renderer=2d` forces the Canvas 2D renderer and `?brain=legacy` forces the fallback brain.
 
 ## Architecture
 
 | File | Responsibility |
 |---|---|
 | `js/world-config.js` | Layout, units, species, tunable parameters, scenarios. All authored data. |
-| `js/world-state.js` | Seeded RNG, entities, fruit lifecycle, validated command API, source-tagged events, serialization |
-| `js/world-physics.js` | Body integration, altitude limits, sub-stepped swept collisions, web snag and release, landing |
-| `js/world-senses.js` | Odor at two antennae, taste on contact, visual web cue per eye, touch, wind, light |
-| `js/world-brain-adapter.js` | Sidecar parsing and validation, encoder, readout, modeled VNC motor adapter, brain backends |
-| `js/fly-logic.js` | `FlyPolicy`: behavior states, body commands, feeding intake, drives in simulation time |
+| `js/world-state.js` | Seeded RNG, entities (adult flies, brood, fruit, webs), fruit lifecycle, validated command API, source-tagged events, serialization, the per-fly focus |
+| `js/world-physics.js` | Body integration, altitude limits, sub-stepped swept collisions (including fly against fly), web snag and release, landing |
+| `js/world-senses.js` | Odor at two antennae, taste on contact, visual web cue per eye, touch, wind, light, modeled social cues |
+| `js/world-life.js` | Modeled reproduction and life cycle: mounting, copulation, egg-laying, eggs, larvae, pupae, emergence, the population cap |
+| `js/world-brain-adapter.js` | Sidecar parsing and validation, encoder, readout, modeled VNC motor adapter, brain backends (one brain per fly) |
+| `js/fly-logic.js` | `FlyPolicy`: behavior states (including courtship and egg-laying), body commands, feeding intake, drives in simulation time |
 | `js/simulation-clock.js` | Fixed 60 Hz body steps, 10 Hz neural steps, stalls, pause, speed |
-| `js/world-sim.js` | One run: settling, the neural/body schedule, trace, replay log, scenario triggers |
-| `js/world-renderer.js` | WebGL garden, articulated fly with the X-ray brain, overlays, garden/close-up/eyes cameras, picking |
+| `js/world-sim.js` | One run: every fly's agent (brain slot, encoder, readout, motor adapter), settling, the neural/body schedule, traces, replay log, scenario triggers |
+| `js/world-renderer.js` | WebGL garden, the focused fly as the articulated X-ray model, the other flies and the brood instanced, overlays, garden/close-up/eyes cameras, picking |
 | `js/world-renderer-2d.js` | Canvas 2D fallback renderer of the same state |
 | `js/world-inspector.js` | Trace, timeline, experiments, inspection, explanations |
-| `js/main.js` | Application coordinator: brain loading, renderer selection, tools, UI, caretaker hooks |
-| `js/sim-worker.js` | LIF network over the connectome; step protocol with step IDs |
-| `js/brain-worker-bridge.js` | Asset loading and validation; mirrors steps into the neuron panel and Brain 3D |
+| `js/main.js` | Application coordinator: brain loading, renderer selection, tools, the focused fly, UI, caretaker hooks |
+| `js/sim-worker.js` | LIF network over the connectome; one brain per fly over the shared connectome; step and batch protocol with step IDs |
+| `js/brain-worker-bridge.js` | Asset loading and validation; mirrors the focused fly's steps into the neuron panel and Brain 3D |
 
 ```mermaid
 flowchart LR
@@ -58,12 +60,12 @@ flowchart LR
     M --> I
 ```
 
-**Schedule.** Body physics runs at a fixed 60 Hz and the brain at 10 Hz, with rendering interpolated between body steps. At the start of each 100 ms block, `world-sim.js` does four things in order:
+**Schedule.** Body physics runs at a fixed 60 Hz and the brain at 10 Hz, with rendering interpolated between body steps. At the start of each 100 ms block, `world-sim.js` does four things in order, for each fly in turn:
 
 1. Applies the result of the previous neural step (readout, then motor adapter).
 2. Updates drives and chooses a behavior.
-3. Samples the senses, encodes them, and requests the next neural step.
-4. Runs six body steps with the held motor output.
+3. Samples the senses, encodes them, and requests the next neural step (all flies' requests go to the worker as one batch).
+4. Runs six body steps with the held motor output; after each, the life cycle (mounting, copulation, eggs, brood, emergence).
 
 Motor output therefore lags its sensory input by one step, and only one neural step is ever outstanding. If a result is late, simulated time stalls (shown as "waiting for brain"); the clock never skips neural steps or changes their dynamics.
 
@@ -196,6 +198,7 @@ FAFB has no ventral nerve cord, so converting brain activity into leg and wing m
 | upwindTurn | **modeled** | Odor-gated turning into the breeze |
 | wander, bouts | **modeled** | Pattern generator: exploratory turning noise; walking alternates with pauses |
 | groom, brace | **modeled** | Grooming urge (`SEZ_GROOM` is empty); bracing against gusts |
+| courtTurn | **modeled** | A courting male turns toward the female he sees (the male courtship circuit is not in this female connectome) |
 
 The baseline found no lateralized odor signal at the projection-neuron, lateral-horn or descending-neuron level (receptor projections are bilateral). Left/right odor steering therefore exists only as the modeled `odorTurn` and `upwindTurn` terms. The steering mode controls whether they're on:
 
@@ -224,6 +227,39 @@ With motor output silenced, the fly does not move at all: there is no residual s
 - **Fatigue** rises with movement (faster in the dark and in flight) and recovers at rest.
 - **Curiosity** random-walks with the legacy variance.
 - **Groom** accumulates and is relieved by grooming.
+
+## Several flies, courtship and the life cycle
+
+The default garden (scenario "Free garden") starts with a female and a male in the clearing. The experiment scenarios, and scenario "One fly", keep the single female the experiments were measured with; a single-fly run is identical to one before the garden held several flies (same seed, same fingerprint).
+
+### One brain per fly
+
+Every adult runs its own copy of the connectome. The worker holds the connectome's 2.7M synapses once (about 22 MB) and a small dynamic state per fly (voltage, fire state, refractory counters and group gating, about 0.84 MB), selected by a pointer swap before each fly's step. A fly stepped alongside others follows exactly the course it would take alone (Node test). At each 100 ms boundary all flies' brains step in one batch message, so there is still one neural step outstanding however many flies live, and the clock's stall rule is unchanged. Each fly also has its own encoder, readout baselines, motor adapter and trace.
+
+The body, senses and policy code is written for one fly. `WorldState.focus()` points `state.fly`, `state.drives`, `state.behavior` and the other per-fly names at one fly's record while it is processed; these are not serialized, so a saved state stores each fly once. Adults are processed in a fixed order, and all randomness still comes from the seeded state generator, so runs with several flies replay exactly.
+
+Flies are solid to each other: bodies bump and push apart, and a bump is a light touch like one against a trunk. A copulating pair is not solid to itself.
+
+### What is modeled
+
+FlyWire FAFB is a female brain. Males run the same connectome, because a full male connectome (Janelia's male CNS, 2025) is a separate dataset with its own pipeline; the male-specific courtship neurons (P1 and its partners) are therefore absent, and courtship is a modeled program. Nothing in it is fed to the connectome. The modeled parts, all labeled in the UI:
+
+| Part | Model |
+|---|---|
+| Seeing a female | A male sees females in his visual field within 12 BL with a clear line of sight, and reads whether each is mature and whether she has recently mated (a mated female carries the male pheromone cVA). |
+| Courtship (`court`) | A mature male who sees an unmated female, is not tired, and whose connectome escape output is quiet follows her: the modeled `courtTurn` term turns him toward her, and he keeps 0.55 BL between his head and her body. Within 3 BL he sings, holding out the wing nearer her. He gives up after 14 s, if she mates with another male, or if he loses sight of her for 1 s. |
+| Acceptance (`accept`) | A mature, receptive female who hears song and whose connectome escape output is quiet stands still. |
+| Mounting and copulation (`copulate`) | When a courting male reaches an accepting female he mounts her; the pair stays joined for 12 s (the real ~20 min would last about 2 s at this compression, lengthened so it can be seen). |
+| Eggs | **Each mating gives exactly one egg** (`cfg.reproduction.offspringPerMating`; deliberately unrealistic, a real female lays dozens a day). A mated female does not accept again for 90 s (about a week) and until she has laid. |
+| Egg-laying (`oviposit`) | A gravid female lays when her head touches fermenting fruit and her escape output is quiet. Her urge to lay (the `egg` drive) rises while she carries an egg and raises her olfactory gain as hunger does. After about 30 s of carrying she also lays on ripe fruit, as females that hold eggs accept poorer sites. |
+| Development | Egg 15 s, larva 55 s (crawling over its fruit), pupa 60 s beside the fruit, then a new adult: roughly 13 s of garden time per fly day, about 9,000 times faster than at 25 °C. The offspring's sex is 50:50 from the seeded generator. Females mature 20 s after emerging, males 8 s. |
+| New brains | A new adult's brain settles during the last 15 s of its pupal stage (150 neural steps in clean air, as the founders settle before t = 0), so it emerges with settled readout baselines. |
+
+Courtship and egg-laying still depend on each fly's connectome: they need a quiet escape output, and walking, feeding, grooming, defense and odor responses are unchanged. In "Connectome readout only" mode the modeled odor steering is off but courtship still runs (like grooming and the pattern generator, it is a modeled program, not a steering term).
+
+### The population cap
+
+At most 48 flies exist, counting eggs, larvae and pupae, so every egg laid has room to become an adult. A gravid female in a full garden holds her egg (the Inspect panel and the population line show the count). Nothing dies: no life span, starvation or lethal webs. Growth is slow by design (one egg per mating), and in the authored garden it is also limited by food: fruit replenishes slowly, so as flies multiply they eat it before it ferments, and gravid females wait for a place to lay. Dropping fruit with the Fruit tool feeds them and, 120 s later, gives them fermenting fruit to lay on.
 
 ## Determinism, replay and logs
 
@@ -261,9 +297,10 @@ The plan's targets are 60 fps on a desktop reference device and 30 fps on a mobi
 
 Measured by `node tests/browser/run-browser-tests.js --perf docs` ([browser-performance.json](browser-performance.json)) in headless Chrome 154 on an Apple M1 (8 GB), with the X-ray brain on:
 
-- **Frame rate:** 60 fps with p95 frame time 16.7–16.8 ms, vsync-limited. This holds with the garden plus the 139K neuron view, with the follow camera, with Brain 3D open (three WebGL contexts), with the close-up zoomed onto the brain (all 139,255 neurons drawn), and in the fly's-eyes view with its brain inset.
-- **Rendering load:** 148 draw calls and about 37K triangles in the overview; 87 calls in the close-up; 92 in the eyes view, including the inset.
-- **Brain:** 1.0–2.3 ms of worker time per 100 ms step, and a message round trip of 1.5–3.5 ms, including the fire state for the X-ray brain. The simulation keeps wall time (ratio 1.00) with zero stalls.
+- **Frame rate:** 60 fps with p95 frame time 16.7–16.8 ms, vsync-limited. This holds with the garden plus the 139K neuron view, with the follow camera, with Brain 3D open (three WebGL contexts), with the close-up zoomed onto the brain (all 139,255 neurons drawn), in the fly's-eyes view with its brain inset, and with 48 flies (`?flies=48`, the population cap).
+- **Rendering load:** 157 draw calls and about 43K triangles in the overview with the pair, 165 with 48 flies: only the focused fly is drawn as its own model; every other fly and all eggs, larvae and pupae are instanced.
+- **Brain:** 2.5–4.2 ms of worker time per 100 ms step for the pair, and 74 ms for 48 brains (about 1.5 ms each; one worker thread), with message round trips of 3–4 ms and 71 ms. The simulation keeps wall time (ratio 1.00) with zero stalls in every sample, including 48 flies. At the cap the worker is about three-quarters busy, so a slower machine would run the garden slower than wall time (shown as "waiting for brain") rather than skip neural steps; the cap was chosen so 48 brains fit one worker on this machine.
+- **Main thread with 48 flies:** about 5 ms per 100 ms step for senses, policies, encoding and bodies (measured in Node), and a JS heap of about 50 MB.
 
 Quality settings:
 
@@ -271,7 +308,7 @@ Quality settings:
 - Lite mode drops shadows, uses pixel ratio 1, and caps the brain's fill to 3M pixels a frame (24M otherwise) by drawing fewer, brighter neurons.
 - The garden render loop is suspended while Brain 3D covers it.
 
-**Not measured:** mobile Safari and the bundled WKWebView on real devices. The "phone" sample is desktop emulation and says nothing about phone GPUs. Web and foliage level of detail is not implemented; the overview did not need it on this machine.
+**Not measured:** mobile Safari and the bundled WKWebView on real devices. The "phone" sample is desktop emulation and says nothing about phone GPUs or CPUs; a phone may not run 48 brains in real time. Web and foliage level of detail is not implemented; the overview did not need it on this machine.
 
 Neural latency: a sudden odor change reaches the antenna samples on the next step, the lateral-horn readout after about 1 s, and the turn command after about 1.5 s (experiment 5). Most of that is readout smoothing and network dynamics, not the 10 Hz step. A higher neural rate was not needed for the behaviors above.
 
@@ -291,7 +328,7 @@ The sidecar builder needs numpy; the positions builder needs only Python. The iO
 
 ## Testing
 
-- `node tests/run-node.js`: the original 99 regression tests plus world tests. The world tests cover determinism, containment at maximum escape speed, occlusion, asymmetric cues, taste only on contact, no intake without contact, interruption, the clock's one-outstanding-step rule, pause, camera independence, and the neuron positions format and axis mapping. With data present they also run real-worker integration tests: step protocol determinism, sidecar mapping, pathway responses, exact replay, pause/resume equivalence, hungry versus satiated, silencing, the fire state being display-only, and the positions matching the connectome and the anatomy.
+- `node tests/run-node.js`: the original 99 regression tests plus world tests. The world tests cover determinism, containment at maximum escape speed, occlusion, asymmetric cues, taste only on contact, no intake without contact, interruption, the clock's one-outstanding-step rule, pause, camera independence, and the neuron positions format and axis mapping. For several flies they cover founders, serialization and the per-fly focus, flies not passing through each other, the social cues, the courtship and acceptance rules, one egg per mating laid on fermenting fruit, development to a new adult, and the population cap. With data present they also run real-worker integration tests: step protocol determinism, sidecar mapping, pathway responses, exact replay, pause/resume equivalence, hungry versus satiated, silencing, the fire state being display-only, the positions matching the connectome and the anatomy, brains in one worker staying independent in batches, a two-fly run replaying exactly, the default pair mating and laying one egg, and a new adult's brain settling in its pupa.
 - `node tests/browser/run-browser-tests.js`: headless-Chrome scenarios over the DevTools protocol (no extra dependencies). They cover loading and asset checks, the X-ray brain (every neuron drawn, spikes arriving, toggling), real-time pacing, camera and view independence (garden, close-up, eyes, and the first-person camera sitting at the head), fruit clicks in the overview and first person, air drags, observation, hidden-tab pause, Brain 3D coexistence, WebGL context loss, the 2D renderer, the fallback brain, in-browser replay, `file://` loading, and phone-sized touch. Set `CHROME_PATH` to use another Chrome.
 
 ## Caretaker integration
@@ -320,6 +357,7 @@ Commands use world coordinates (`{"coords": "world", "x": 60, "z": 40}`). Legacy
 - **Proboscis readout.** It has only 24 neurons with low rates at the calibrated weight, so it is integrated over about 1.5 s. Single spikes can briefly approach threshold.
 - **Visual threat.** The web cue is a designed stimulus. Its responses are those of the connectome to that stimulus, not evidence of web recognition.
 - **No learning.** Weights are fixed. Revisiting fruit, fear decay and route variation are not memory. A bounded plasticity rule with trained-versus-naive comparisons remains a later milestone.
+- **Sexes and reproduction.** Every fly, male or female, runs the same female FAFB connectome. Courtship, acceptance, copulation and egg-laying are modeled programs (see [Several flies](#several-flies-courtship-and-the-life-cycle)), not connectome results; they are gated by each fly's connectome escape output only. Flies do not see or smell each other through the connectome (no looming response to another fly, no pheromone input), song is not sent to Johnston's organ, and larvae have no brain. One egg per mating, a compressed life cycle and no deaths are deliberate simplifications.
 - **Body.** Walking and short flights only: no climbing, no canopy fruit access, no lethal trapping.
 - **X-ray brain.** One annotated point per neuron, drawn at about 80% scale; the lamina and photoreceptor points sit where FlyWire annotates them, not in a modeled retina. The fly's-eyes view is a single perspective camera, not a model of compound-eye optics or the fly's visual field (the web cue in `world-senses.js` is what the brain receives). The 2D fallback renderer has neither.
 - **Not tested here.** Real mobile devices and the WKWebView bundle. The `file://` browser scenario is only a proxy, because this machine has no Xcode.

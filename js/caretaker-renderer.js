@@ -31,7 +31,8 @@
 
   function flyPoint() {
     var st = window.FlyWorldApp ? window.FlyWorldApp.getState() : null;
-    return st ? { x: st.fly.x, z: st.fly.z } : { x: 0, z: 0 };
+    var f = st ? (window.FlyWorldApp.focusRec ? window.FlyWorldApp.focusRec().fly : st.fly) : null;
+    return f ? { x: f.x, z: f.z } : { x: 0, z: 0 };
   }
 
   // Screen position (overlay-canvas CSS px) of a world point.

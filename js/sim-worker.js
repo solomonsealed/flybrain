@@ -24,6 +24,14 @@
  *   sidecar) neuron indices onto the worker's group-sorted order.
  * - 'snapshot' / 'restore' copy the full dynamic state for replay.
  *
+ * Brains (one per fly): every array a tick changes (voltage, fire state,
+ * refractory counters, group gating, the sustained stimulus) belongs to a
+ * brain; the connectome, metadata and readout populations are shared.
+ * Messages carry `brain` (default 0). 'stepBatch' steps several brains in
+ * one message and replies with one 'stepBatchResult'. 'reset' with a brain
+ * resets that brain; without one it resets brain 0 and releases the rest.
+ * A brain that has never been stepped is a reset brain.
+ *
  * Binary format (little-endian):
  *   Header:   2 x uint32  -- neuron_count, edge_count
  *   Edges:    edge_count x (uint32 pre, uint32 post, float32 weight), sorted by pre
@@ -36,8 +44,9 @@
  *
  * Message protocol:
  *   Main -> Worker: init, start, stop, stimulate, setStimulusState, setParams,
- *                   reset, step, definePopulations, snapshot, restore
- *   Worker -> Main: ready, tick, stats, error, stepResult, snapshot, restored
+ *                   reset, step, stepBatch, definePopulations, snapshot, restore
+ *   Worker -> Main: ready, tick, stats, error, stepResult, stepBatchResult,
+ *                   snapshot, restored
  */
 
 /* ---------- constants ---------- */
@@ -88,6 +97,26 @@ var groupCooldown = null;        // Uint8Array[numGroups]
 var groupRecvInput = null;       // Uint8Array[numGroups] per-tick scratch
 var groupFiredThisTick = null;   // Uint8Array[numGroups] per-tick scratch
 var groupStimulatedThisTick = null; // Uint8Array[numGroups] per-tick scratch
+
+/* brains: the module-level arrays above are the selected brain's; the
+ * others wait in `brains` until selected (a pointer swap, so the tick code
+ * is the same for one brain or many) */
+var brains = [];
+var selectedBrain = 0;
+
+function selectBrain(id) {
+	id = id | 0;
+	if (id === selectedBrain) return;
+	brains[selectedBrain] = { V: V, fired: fired, refractory: refractory, groupActive: groupActive, groupCooldown: groupCooldown,
+		sustainedIndices: sustainedIndices, sustainedIntensities: sustainedIntensities, tickCount: tickCount };
+	var b = brains[id] || { V: new Float32Array(N), fired: new Uint8Array(N), refractory: new Uint8Array(N),
+		groupActive: new Uint8Array(numGroups), groupCooldown: new Uint8Array(numGroups),
+		sustainedIndices: null, sustainedIntensities: null, tickCount: 0 };
+	brains[id] = null;
+	V = b.V; fired = b.fired; refractory = b.refractory; groupActive = b.groupActive; groupCooldown = b.groupCooldown;
+	sustainedIndices = b.sustainedIndices; sustainedIntensities = b.sustainedIntensities; tickCount = b.tickCount;
+	selectedBrain = id;
+}
 
 /* ---------- decompressGzip ---------- */
 
@@ -175,11 +204,13 @@ function parseBinary(buffer) {
 		groupId[i] = view.getUint16(metaOffset + i * 3 + 1, true);
 	}
 
-	/* allocate simulation state */
+	/* allocate simulation state (brain 0) */
 	V = new Float32Array(N);
 	fired = new Uint8Array(N);
 	refractory = new Uint8Array(N);
 	tickCount = 0;
+	brains = [];
+	selectedBrain = 0;
 }
 
 /* ---------- buildGroupStructures ---------- */
@@ -492,6 +523,7 @@ function runStep(msg) {
 	var result = {
 		type: 'stepResult',
 		stepId: msg.stepId,
+		brain: selectedBrain,
 		ticks: ticks,
 		tickCount: tickCount,
 		firedNeurons: firedTotal,
@@ -600,6 +632,7 @@ self.onmessage = function (e) {
 			self.postMessage({type: 'error', message: 'Cannot start: not initialized'});
 			return;
 		}
+		selectBrain(0);   /* free-running (legacy) mode runs brain 0 */
 		running = true;
 		setTimeout(tick, 0);
 		break;
@@ -609,16 +642,24 @@ self.onmessage = function (e) {
 		break;
 
 	case 'stimulate':
+		selectBrain(e.data.brain || 0);
 		applyPulses(e.data.indices, e.data.intensities);
 		break;
 
 	case 'setStimulusState':
+		selectBrain(e.data.brain || 0);
 		sustainedIndices = e.data.indices;
 		sustainedIntensities = e.data.intensities;
 		break;
 
 	case 'reset':
 		if (N === 0) break;
+		if (e.data.brain !== undefined) {
+			selectBrain(e.data.brain);
+		} else {
+			selectBrain(0);
+			brains = [];
+		}
 		resetState();
 		break;
 
@@ -643,16 +684,35 @@ self.onmessage = function (e) {
 			return;
 		}
 		running = false; /* step mode and free-running mode are exclusive */
+		selectBrain(e.data.brain || 0);
 		self.postMessage(runStep(e.data));
+		break;
+
+	case 'stepBatch':
+		if (N === 0) {
+			self.postMessage({type: 'error', message: 'Cannot step: not initialized', batchId: e.data.batchId});
+			return;
+		}
+		running = false;
+		var steps = e.data.steps || [], results = [], transfer = [];
+		for (var s = 0; s < steps.length; s++) {
+			selectBrain(steps[s].brain || 0);
+			var r = runStep(steps[s]);
+			if (r.fireState) transfer.push(r.fireState.buffer);
+			results.push(r);
+		}
+		self.postMessage({type: 'stepBatchResult', batchId: e.data.batchId, results: results}, transfer);
 		break;
 
 	case 'snapshot':
 		if (N === 0) break;
+		selectBrain(e.data.brain || 0);
 		self.postMessage({type: 'snapshot', requestId: e.data.requestId, state: snapshotState()});
 		break;
 
 	case 'restore':
 		if (N === 0) break;
+		selectBrain(e.data.brain || 0);
 		restoreState(e.data.state);
 		self.postMessage({type: 'restored', requestId: e.data.requestId});
 		break;

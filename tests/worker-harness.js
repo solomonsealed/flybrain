@@ -54,7 +54,7 @@ function createWorker(options) {
 	var factory = vm.runInThisContext(wrapped, { filename: 'js/sim-worker.js', lineOffset: -1 });
 	factory(self, perf, noTimers, undefined);
 
-	var REPLY_TYPES = { ready: 1, stepResult: 1, snapshot: 1, restored: 1, error: 1 };
+	var REPLY_TYPES = { ready: 1, stepResult: 1, stepBatchResult: 1, snapshot: 1, restored: 1, error: 1 };
 	var lastStats = null;
 
 	// Delivers one message and returns the worker's direct reply (if any).

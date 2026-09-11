@@ -732,7 +732,9 @@
 		return new Promise(function (resolve, reject) {
 			var subtitle = document.getElementById('connectomeSubtitle');
 			if (subtitle) subtitle.textContent = 'Parsing connectome...';
-			var w = new Worker('js/sim-worker.js');
+			// versioned like the page's scripts: a cached worker without
+			// batched multi-brain steps would stall the garden
+			var w = new Worker('js/sim-worker.js?v=20');
 			worker = w;
 			w.onmessage = function (e) {
 				if (e.data.type === 'ready') {

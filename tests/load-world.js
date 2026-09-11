@@ -20,6 +20,7 @@ var WORLD_FILES = [
 	'js/world-state.js',
 	'js/world-physics.js',
 	'js/world-senses.js',
+	'js/world-life.js',
 	'js/world-brain-adapter.js',
 	'js/simulation-clock.js',
 	'js/world-sim.js',

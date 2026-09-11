@@ -14,8 +14,11 @@
 
 	var BEHAVIOR_COLORS = {
 		walk: '#8cc8ff', feed: '#ffcc40', startle: '#ff5a4d', fly: '#d88cff', groom: '#99ff99',
-		rest: '#9999b3', idle: '#bfbfbf', brace: '#99e6e6', snagged: '#ff3399'
+		rest: '#9999b3', idle: '#bfbfbf', brace: '#99e6e6', snagged: '#ff3399',
+		court: '#ff8ccc', accept: '#ffbfd9', copulate: '#f27aa6', oviposit: '#ccf280'
 	};
+	var SEX_RING = { female: 'rgba(255,194,214,0.7)', male: 'rgba(156,201,255,0.7)' };
+	var BROOD_COLORS = { egg: '#f4efe2', larva: '#eee2c2', pupa: '#8a5a24' };
 
 	function create(canvas, cfg, state) {
 		var ctx = canvas.getContext('2d');
@@ -182,7 +185,18 @@
 				});
 			}
 
-			drawFly(state, pose, info);
+			// brood: eggs and larvae on their fruit, pupae beside it
+			state.brood.forEach(function (e) {
+				var r = e.stage === 'egg' ? 0.14 : e.stage === 'larva' ? 0.3 : 0.45;
+				circle(e.x, e.z, r, BROOD_COLORS[e.stage]);
+			});
+
+			// every adult; the focused one with its neural overlay
+			var focus = focusRec(state);
+			state.flies.forEach(function (rec) {
+				if (rec !== focus) drawFly(rec, lastInfo && lastInfo.poseOf ? lastInfo.poseOf(rec) : rec.fly, null, false);
+			});
+			drawFly(focus, pose, info, true);
 
 			// canopies over everything, translucent
 			cfg.trees.forEach(function (t) {
@@ -198,13 +212,18 @@
 
 			// selection
 			if (selection) {
-				var obj = selection.type === 'fruit' ? WS.findById(state.fruits, selection.id) : selection.type === 'web' ? WS.findById(state.webs, selection.id) : null;
+				var obj = selection.type === 'fruit' ? WS.findById(state.fruits, selection.id) : selection.type === 'web' ? WS.findById(state.webs, selection.id) :
+					selection.type === 'brood' ? WS.findById(state.brood, selection.id) : null;
 				if (obj) {
 					var sp2 = toScreen(obj.x, obj.z);
 					ctx.strokeStyle = '#7dd3fc'; ctx.lineWidth = 2;
-					ctx.beginPath(); ctx.arc(sp2.x, sp2.y, (obj.radius * 1.4) * s + 4, 0, Math.PI * 2); ctx.stroke();
+					ctx.beginPath(); ctx.arc(sp2.x, sp2.y, ((obj.radius || 0.4) * 1.4) * s + 4, 0, Math.PI * 2); ctx.stroke();
 				}
 			}
+		}
+
+		function focusRec(state) {
+			return (lastInfo && lastInfo.focusId && WS.findFly(state, lastInfo.focusId)) || state.flies[0];
 		}
 
 		function drawScent(state, o, s) {
@@ -228,14 +247,14 @@
 			ctx.drawImage(scentCanvas, o.x, o.y, (b.xMax - b.xMin) * s, (b.zMax - b.zMin) * s);
 		}
 
-		function drawFly(state, pose, info) {
+		function drawFly(rec, pose, info, focused) {
 			var p = toScreen(pose.x, pose.z);
 			var s = view.scale;
-			var bh = state.behavior.current;
-			// marker ring for findability
-			ctx.strokeStyle = 'rgba(255,243,196,0.6)';
-			ctx.lineWidth = 1.5;
-			ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(8, 1.1 * s), 0, Math.PI * 2); ctx.stroke();
+			var bh = rec.behavior.current;
+			// marker ring for findability, colored by sex; the focused fly's is brighter
+			ctx.strokeStyle = SEX_RING[rec.sex] || 'rgba(255,243,196,0.6)';
+			ctx.lineWidth = focused ? 2.5 : 1.2;
+			ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(focused ? 8 : 6, 1.1 * s), 0, Math.PI * 2); ctx.stroke();
 			if (overlays.neural && info && info.motor) {
 				ctx.strokeStyle = 'rgba(255,180,50,' + clamp(info.motor.odorResponse, 0, 1).toFixed(2) + ')';
 				ctx.lineWidth = 3;
@@ -245,7 +264,7 @@
 			ctx.translate(p.x, p.y);
 			// screen y = world z; heading h has forward (cos h, -sin h)
 			ctx.rotate(-pose.heading);
-			var k = Math.max(s, 7);
+			var k = Math.max(s, 7) * (rec.sex === 'male' ? 0.88 : 1);
 			if (pose.y > 0.1) { ctx.fillStyle = 'rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(0, 0, 0.5 * k, 0.25 * k, 0, 0, Math.PI * 2); ctx.fill(); ctx.translate(0, -pose.y * 0.3 * k); }
 			var spread = bh === 'fly' ? 1 : 0;
 			ctx.fillStyle = 'rgba(210,220,236,0.5)';
@@ -257,13 +276,19 @@
 			ctx.strokeStyle = '#3d2b0f'; ctx.lineWidth = Math.max(1, 0.03 * k);
 			for (var i = 0; i < 3; i++) {
 				var ax = 0.16 - i * 0.08;
-				var sw = state.fly.speed > 0.05 ? Math.sin(performance.now() / 60 + i * 2) * 0.1 : 0;
+				var sw = rec.fly.speed > 0.05 ? Math.sin(performance.now() / 60 + i * 2) * 0.1 : 0;
 				[-1, 1].forEach(function (side) {
 					ctx.beginPath(); ctx.moveTo(ax * k, 0); ctx.lineTo((ax + (1 - i) * 0.12 + sw * side) * k, side * 0.3 * k); ctx.stroke();
 				});
 			}
 			ctx.fillStyle = '#c28f1f';
-			ctx.beginPath(); ctx.ellipse(-0.24 * k, 0, 0.27 * k, 0.15 * k, 0, 0, Math.PI * 2); ctx.fill();
+			if (rec.sex === 'male') {
+				ctx.beginPath(); ctx.ellipse(-0.19 * k, 0, 0.21 * k, 0.14 * k, 0, 0, Math.PI * 2); ctx.fill();
+				ctx.fillStyle = '#4a320a';   // dark abdomen tip
+				ctx.beginPath(); ctx.ellipse(-0.3 * k, 0, 0.1 * k, 0.11 * k, 0, 0, Math.PI * 2); ctx.fill();
+			} else {
+				ctx.beginPath(); ctx.ellipse(-0.24 * k, 0, 0.27 * k, 0.15 * k, 0, 0, Math.PI * 2); ctx.fill();
+			}
 			ctx.fillStyle = '#8b6914';
 			ctx.beginPath(); ctx.ellipse(0.08 * k, 0, 0.17 * k, 0.13 * k, 0, 0, Math.PI * 2); ctx.fill();
 			ctx.beginPath(); ctx.ellipse(0.3 * k, 0, 0.09 * k, 0.12 * k, 0, 0, Math.PI * 2); ctx.fill();
@@ -308,11 +333,14 @@
 		/* ---------- API ---------- */
 
 		var api = { kind: 'canvas2d' };
+		var lastFocus = null;
 		api.sync = function (state, pose, info) {
 			lastState = state; lastPose = pose; lastInfo = info;
-			var f = state.fly, last = trail[trail.length - 1];
+			var rec = focusRec(state), f = rec.fly;
+			if (rec.id !== lastFocus) { trail = []; lastFocus = rec.id; }
+			var last = trail[trail.length - 1];
 			if (!last || Math.hypot(last.x - f.x, last.z - f.z) > 0.25) {
-				trail.push({ x: f.x, z: f.z, b: state.behavior.current });
+				trail.push({ x: f.x, z: f.z, b: rec.behavior.current });
 				if (trail.length > cfg.render.trailLength) trail.shift();
 			}
 			if (follow) {
@@ -333,7 +361,12 @@
 			var p = api.screenToGround(cx, cy);
 			if (!p) return null;
 			var st = lastState, tol = 10 / view.scale;
-			if (Math.hypot(p.x - st.fly.x, p.z - st.fly.z) < Math.max(0.8, tol)) return { type: 'fly', x: p.x, z: p.z };
+			var near = WS.nearestFly(st, p.x, p.z);
+			if (near && Math.hypot(p.x - near.fly.x, p.z - near.fly.z) < Math.max(0.8, tol)) return { type: 'fly', id: near.id, x: p.x, z: p.z };
+			for (var bi = 0; bi < st.brood.length; bi++) {
+				var e = st.brood[bi];
+				if (Math.hypot(p.x - e.x, p.z - e.z) < Math.max(0.5, tol * 0.6)) return { type: 'brood', id: e.id, x: p.x, z: p.z };
+			}
 			for (var i = 0; i < st.fruits.length; i++) {
 				var f = st.fruits[i];
 				if (f.stage === 'attached') continue;

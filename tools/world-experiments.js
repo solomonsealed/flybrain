@@ -36,8 +36,9 @@ var worker = W.harness.createWorker();
 
 // Runs one simulation. opts: scenario, seed, mode, seconds, drives,
 // stateOptions (merged over the scenario), setup(sim), perStep(sim, rec).
+// These are single-fly experiments: the default is the one-fly garden.
 function run(opts) {
-	var sc = FlyWorldSim.scenarioOptions(cfg, opts.scenario || 'free', { drives: opts.drives });
+	var sc = FlyWorldSim.scenarioOptions(cfg, opts.scenario || 'single', { drives: opts.drives });
 	if (opts.stateOptions) for (var k in opts.stateOptions) sc.stateOptions[k] = opts.stateOptions[k];
 	var backend = W.connectomeBackend({ worker: worker });
 	backend.reset();
@@ -287,7 +288,7 @@ if (want('intervention')) {
 		var runs = SEEDS.map(function (seed) {
 			var t0 = 15, dOdor = makeDetector(t0, 0.02), dLH = makeDetector(t0, 0.004), dTurn = makeDetector(t0, 0.3);
 			var dropped = false;
-			var r = run({ scenario: kind[0] === 'breeze' ? 'moveFruit' : 'free', seed: seed, seconds: 22,
+			var r = run({ scenario: kind[0] === 'breeze' ? 'moveFruit' : 'single', seed: seed, seconds: 22,
 				stateOptions: kind[0] === 'drop' ? { fruit: false } : null,
 				perStep: function (sim, rec) {
 					if (kind[0] === 'drop' && !dropped && rec.t >= t0 - 0.05) {
